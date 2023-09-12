@@ -6,3 +6,5 @@
 lib/*
 test/*
 include/README
+References/*
+src/secrets.h
