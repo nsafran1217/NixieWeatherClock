@@ -52,11 +52,13 @@ const char *password = WIFI_PASSWORD;
 const char *openWeatherMapApiKey = WEATHER_API;
 const char *lat = WEATHER_LAT;
 const char *lon = WEATHER_LON;
+const char *zipCode = ZIP_CODE;
 const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
-String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minutely,alerts&units=imperial&lat=" + String(lat) + "&lon=" + String(lon) + "&appid=" + String(openWeatherMapApiKey);
-
+//String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minutely,alerts&units=imperial&lat=" + String(lat) + "&lon=" + String(lon) + "&appid=" + String(openWeatherMapApiKey);
+String currentURL = "http://api.weatherapi.com/v1/current.json?key="+ String(openWeatherMapApiKey) + "&q=" + String(zipCode) + "&aqi=no";
+String forcastURL = "http://api.weatherapi.com/v1/forecast.json?key="+ String(openWeatherMapApiKey) + "&q=" + String(zipCode) + "&days=2&aqi=no&alerts=no";
 /*FREE:
 27
 35 INPUT ONLY
@@ -146,7 +148,7 @@ void setup()
 
 void loop()
 {
-  // updateWeather();
+   updateWeather();
   delay(60000);
 
   // Display on or off
@@ -460,32 +462,22 @@ void updateWeather()
       return;
     }
 
-    float current_temp = doc["current"]["temp"]; // 65.62
+    //current
+    currentTemp = doc["current"]["temp"]; // 65.62
+    currentIcon = doc["current"]["weather"][0]["icon"]; // "03n"
+    currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"] ;  //if 15 min past hour, then display pop for next hour
+    //tomorrow
+    tmrwDayTemp = doc["daily"][1]["temp"]["day"];
+    tmrwPOP = doc["daily"][1]["pop"];
+    tomorrowIcon = doc["daily"][1]["weather"][0]["icon"];
 
-    const char *current_weather_0_icon = doc["current"]["weather"][0]["icon"]; // "03n"
-
-    for (JsonObject hourly_item : doc["hourly"].as<JsonArray>())
-    {
-
-      float hourly_item_pop = hourly_item["pop"]; // 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...
-    }
-
-    for (JsonObject daily_item : doc["daily"].as<JsonArray>())
-    {
-
-      float daily_item_temp_day = daily_item["temp"]["day"]; // 75.83, 78.15, 67.8, 66.54, 70.27, 74.61, ...
-      Serial.println(daily_item_temp_day);
-      float daily_item_temp_night = daily_item["temp"]["night"]; // 63.86, 61.11, 51.6, 50.04, 52.07, 54.68, ...
-
-      const char *daily_item_weather_0_icon = daily_item["weather"][0]["icon"]; // "02d", "10d", "10d", "02d", ...
-
-      float daily_item_pop = daily_item["pop"]; // 0.11, 0.94, 0.72, 0, 0, 0, 1, 0.98
-    }
-
-    // end generated code
     Serial.print("Temperature: ");
-    Serial.println(current_temp);
-    Serial.println(current_weather_0_icon);
+    Serial.println(currentTemp);
+    Serial.println(currentPOP);
+    Serial.println(currentIcon);
+    Serial.println(tmrwDayTemp);
+    Serial.println(tmrwPOP);
+    Serial.println(tomorrowIcon);
   }
   else
   {
