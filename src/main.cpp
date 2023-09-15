@@ -49,16 +49,15 @@
 
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
-const char *openWeatherMapApiKey = WEATHER_API;
+const char *apiKey = NEW_WEATHER_API;
 const char *lat = WEATHER_LAT;
 const char *lon = WEATHER_LON;
 const char *zipCode = ZIP_CODE;
 const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
-//String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minutely,alerts&units=imperial&lat=" + String(lat) + "&lon=" + String(lon) + "&appid=" + String(openWeatherMapApiKey);
-String currentURL = "http://api.weatherapi.com/v1/current.json?key="+ String(openWeatherMapApiKey) + "&q=" + String(zipCode) + "&aqi=no";
-String forcastURL = "http://api.weatherapi.com/v1/forecast.json?key="+ String(openWeatherMapApiKey) + "&q=" + String(zipCode) + "&days=2&aqi=no&alerts=no";
+// String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minutely,alerts&units=imperial&lat=" + String(lat) + "&lon=" + String(lon) + "&appid=" + String(openWeatherMapApiKey);
+String forecastURL = "http://api.weatherapi.com/v1/forecast.json?key=" + String(apiKey) + "&q=" + String(zipCode) + "&days=2&aqi=no&alerts=no";
 /*FREE:
 27
 35 INPUT ONLY
@@ -77,22 +76,22 @@ NixieBoard Nixies = NixieBoard(IN12_DATA_PIN, IN12_CLK_PIN, IN12_LATCH_PIN);
 uint8_t currentStateCLK = 0, lastStateCLK = 0;
 unsigned long lastButtonPress = 0;
 // DateTime Vars
-int8_t hour = 0, minute = 0, second = 0, month = 0, day = 0;
+uint8_t hour = 0, minute = 0, second = 0, month = 0, day = 0;
 int year = 0;
 // Weather Vars
 float currentTemp = 0, currentPOP = 0, tmrwDayTemp = 0, tmrwPOP = 0;
-const char *currentIcon = "", *tomorrowIcon = "";
+uint16_t currentCode = 0, tomorrowCode = 0;
 
 // Timer Vars
 uint16_t userInputBlinkTime = 500;
 uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
-uint8_t lastWeatherCheckMin = 0; // Last Minute weather was checked
+uint8_t lastWeatherCheckMin = 0;  // Last Minute weather was checked
 uint8_t nextSecondToChangeDateTimeModes = 0;
 // Mode Vars
 uint8_t timeDateDisplayMode = 0; // display time, date, or rotate between them
 uint8_t nextPoisonRunMinute = 0; // next minute that antipoison will run
 boolean displayDateOrTime = 0;   // are we displaying the date or time
-boolean vfdDisplayMode = 0;      // display weather now, or tomorrow's forcast
+boolean vfdDisplayMode = 0;      // display weather now, or tomorrow's forecast
 boolean displayOff = false;      // are the power supplies turned off?
 uint8_t wifiStatusLED = 0;       // 0=off, 1=on, 2=blinking
 
@@ -148,7 +147,7 @@ void setup()
 
 void loop()
 {
-   updateWeather();
+  updateWeather();
   delay(60000);
 
   // Display on or off
@@ -432,29 +431,11 @@ void updateWeather()
 {
   if (WiFi.status() == WL_CONNECTED)
   {
-    // generated code below
-    // Courtesy of https://arduinojson.org/v6/assistant
-    // Stream& input;
+    DynamicJsonDocument doc(8192);
 
-    StaticJsonDocument<272> filter;
-
-    JsonObject filter_current = filter.createNestedObject("current");
-    filter_current["temp"] = true;
-    filter_current["weather"][0]["icon"] = true;
-    filter["hourly"][0]["pop"] = true;
-
-    JsonObject filter_daily_0 = filter["daily"].createNestedObject();
-    filter_daily_0["pop"] = true;
-
-    JsonObject filter_daily_0_temp = filter_daily_0.createNestedObject("temp");
-    filter_daily_0_temp["day"] = true;
-    filter_daily_0_temp["night"] = true;
-    filter_daily_0["weather"][0]["icon"] = true;
-
-    DynamicJsonDocument doc(3072);
-
-    DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
-
+    String forecast = httpGETRequest(forecastURL.c_str());  //for some reason I cant just directly put this into the deserialize.
+    Serial.println(forecast);
+    DeserializationError error = deserializeJson(doc, forecast);
     if (error)
     {
       Serial.print("deserializeJson() failed: ");
@@ -462,22 +443,28 @@ void updateWeather()
       return;
     }
 
-    //current
-    currentTemp = doc["current"]["temp"]; // 65.62
-    currentIcon = doc["current"]["weather"][0]["icon"]; // "03n"
-    currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"] ;  //if 15 min past hour, then display pop for next hour
-    //tomorrow
-    tmrwDayTemp = doc["daily"][1]["temp"]["day"];
-    tmrwPOP = doc["daily"][1]["pop"];
-    tomorrowIcon = doc["daily"][1]["weather"][0]["icon"];
+    // current
+    currentTemp = doc["current"]["temp_f"];
+    currentCode = doc["current"]["condition"]["code"];
+    if (minute < 15)
+    {
+      currentPOP = doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_rain"] > doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_snow"] ? doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_rain"] : doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_snow"]; // pick snow or rain to display based on whichever is better
+    }
+    else
+    {
+      currentPOP = doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_rain"] > doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_snow"] ? doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_rain"] : doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_snow"]; // pick snow or rain to display based on whichever is better
+    }
+    // tomorrow
+    tmrwDayTemp = doc["forecast"]["forecastday"][1]["day"]["maxtemp_f"];
+    tomorrowCode = doc["forecast"]["forecastday"][1]["day"]["condition"]["code"];
+    tmrwPOP = doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_rain"] > doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_snow"] ? doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_rain"] : doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_snow"]; // pick snow or rain to display based on whichever is better
 
-    Serial.print("Temperature: ");
     Serial.println(currentTemp);
     Serial.println(currentPOP);
-    Serial.println(currentIcon);
+    Serial.println(currentCode);
     Serial.println(tmrwDayTemp);
     Serial.println(tmrwPOP);
-    Serial.println(tomorrowIcon);
+    Serial.println(tomorrowCode);
   }
   else
   {
