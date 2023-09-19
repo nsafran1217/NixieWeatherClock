@@ -22,12 +22,6 @@
 #define POISON_TIME_SPAN_ADDRESS 6
 #define POISON_TIME_START_ADDRESS 7
 
-// the rotatry encoder has built in pull ups. Can use the input only pins for those
-#define ROTCLK_PIN 36 // VP
-#define ROTDT_PIN 39  // VN
-#define ROTBTTN_PIN 34
-#define SHUTDOWN_SUPPLY_PIN 4 // set HIGH to enable supplies. LOW to turn them off
-
 #define INS1_LATCH_PIN 16 // u2_rxd
 #define INS1_DATA_PIN 17  // u2_txd
 #define INS1_CLK_PIN 18
@@ -38,35 +32,52 @@
 #define IV17_CLK_PIN 32
 #define IV17_BLNK_PIN 33
 
-#define IN12_LATCH_PIN 21
-#define IN12_DATA_PIN 22
-#define IN12_CLK_PIN 23
+#define IN12_LATCH_PIN 23 //clk
+#define IN12_DATA_PIN 21
+#define IN12_CLK_PIN 22 //srclk
 
-#define REGIME_BTN_PIN 27 // value may change
+// the rotatry encoder has built in pull ups. Can use the input only pins for those
+#define ROTCLK_PIN 36 // VP
+#define ROTDT_PIN 39  // VN
+#define ROTBTTN_PIN 34
+#define SHUTDOWN_SUPPLY_PIN 4 // set HIGH to enable supplies. LOW to turn them off
+
+#define NOW_TMRW_SW_PIN 5
+#define DYN_STAT_SW_PIN 13
+#define ON_OFF_SW_PIN 27
+
+#define VFD_MODE_BTN_PIN 35 // value may change
+#define NOW_LED_PIN 12
+#define TMRW_LED_PIN 14
+#define WIFI_LED_PIN 2
 
 #define INS1_DISPLAYS 2
 #define IV17_DISPLAYS 6
+/*FREE:
+15 -PWM at boot, Strapping |
+//taken
+2 -LED OUTPUT only
+35 INPUT ONLY - REGIME
+14 -PWM at boot | LED OUTPUT
+12 - boot fails if pulled high, strapping pin
+27
+13
+5 -PWM at boot, Strapping | Maybe an input for button
+*/
 
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
 const char *apiKey = NEW_WEATHER_API;
+const char *openWeatherMapApiKey = WEATHER_API;
 const char *lat = WEATHER_LAT;
 const char *lon = WEATHER_LON;
 const char *zipCode = ZIP_CODE;
 const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
-// String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minutely,alerts&units=imperial&lat=" + String(lat) + "&lon=" + String(lon) + "&appid=" + String(openWeatherMapApiKey);
+String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minutely,alerts&units=imperial&lat=" + String(lat) + "&lon=" + String(lon) + "&appid=" + String(openWeatherMapApiKey);
 String forecastURL = "http://api.weatherapi.com/v1/forecast.json?key=" + String(apiKey) + "&q=" + String(zipCode) + "&days=2&aqi=no&alerts=no";
-/*FREE:
-27
-35 INPUT ONLY
-13
-14 -PWM at boot | LED OUTPUT
-15 -PWM at boot, Strapping |
-5 -PWM at boot, Strapping | Maybe an input for button
-2 -LED OUTPUT only
-*/
+
 // Setup Devices
 INS1Matrix matrix = INS1Matrix(INS1_DATA_PIN, INS1_CLK_PIN, INS1_LATCH_PIN, INS1_BLNK_PIN, false, INS1_DISPLAYS);
 IV17 ivtubes = IV17(IV17_DATA_PIN, IV17_CLK_PIN, IV17_STRB_PIN, IV17_BLNK_PIN, IV17_DISPLAYS);
@@ -81,19 +92,26 @@ int year = 0;
 // Weather Vars
 float currentTemp = 0, currentPOP = 0, tmrwDayTemp = 0, tmrwPOP = 0;
 uint16_t currentCode = 0, tomorrowCode = 0;
+uint16_t currentID = 0, tmrwID = 0;
 
 // Timer Vars
 uint16_t userInputBlinkTime = 500;
 uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
-uint8_t lastWeatherCheckMin = 0;  // Last Minute weather was checked
+uint8_t nextMinuteToUpdateWeather = 0;
+uint8_t lastWeatherCheckMin = 0; // Last Minute weather was checked
 uint8_t nextSecondToChangeDateTimeModes = 0;
+uint8_t nextSecondToChangeVFDMode = 0;
+unsigned long userNotifyTimer = 0;
 // Mode Vars
-uint8_t timeDateDisplayMode = 0; // display time, date, or rotate between them
-uint8_t nextPoisonRunMinute = 0; // next minute that antipoison will run
-boolean displayDateOrTime = 0;   // are we displaying the date or time
-boolean vfdDisplayMode = 0;      // display weather now, or tomorrow's forecast
-boolean displayOff = false;      // are the power supplies turned off?
-uint8_t wifiStatusLED = 0;       // 0=off, 1=on, 2=blinking
+uint8_t timeDateDisplayMode = 0;      // display time, date, or rotate between them
+uint8_t nextPoisonRunMinute = 0;      // next minute that antipoison will run
+boolean displayDateOrTime = 0;        // are we displaying the date or time
+boolean vfdCurrentDisplay = 0;        // displaying weather now, or tomorrow's forecast
+uint8_t vfdDisplayMode = 0;           // rotate, static now, static tomorrow
+boolean displayOff = false;           // are the power supplies turned off?
+boolean currentMatrixDisplayMode = 0; // dynamic or static
+boolean currentMatrixDisplayTime = 0; // tmrw or now
+uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
 
 uint8_t dateTimeDisplayRotateSpeed = EEPROM.read(ROTATE_TIME_ADDRESS); // time in second, min 4, max 59
 boolean twentyFourHourMode = EEPROM.read(TWELVE_HOUR_MODE_ADDRESS);    // 0 for 12, 1 for 24
@@ -116,12 +134,12 @@ void updateDateTime();
 void displayTime();
 void displayDate();
 void updateWeather();
-void displayWeather();
+void displayVFDWeather();
+void displayMatrixWeather();
 String httpGETRequest(const char *serverName);
 
 void setup()
 {
-
   Serial.begin(115200);
   Serial.println("ON");
 
@@ -129,6 +147,17 @@ void setup()
   pinMode(ROTCLK_PIN, INPUT);
   pinMode(ROTDT_PIN, INPUT);
   pinMode(ROTBTTN_PIN, INPUT);
+
+  pinMode(NOW_TMRW_SW_PIN, INPUT_PULLUP);
+  pinMode(DYN_STAT_SW_PIN, INPUT_PULLUP);
+  pinMode(ON_OFF_SW_PIN, INPUT_PULLUP);
+
+  pinMode(VFD_MODE_BTN_PIN, INPUT);
+  pinMode(NOW_LED_PIN, OUTPUT);
+  pinMode(TMRW_LED_PIN, OUTPUT);
+  pinMode(WIFI_LED_PIN, OUTPUT);
+
+  digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH);  //turn on power
   nextPoisonRunMinute = poisonTimeStart + poisonTimeSpan;
 
   // connect to WiFi
@@ -143,12 +172,15 @@ void setup()
 
   // init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  updateDateTime();
+  nextMinuteToUpdateWeather = ((minute / 10) * 10) + 10;
+  updateWeather();
 }
 
 void loop()
 {
-  updateWeather();
-  delay(60000);
+  displayVFDWeather();
+  delay(10000);
 
   // Display on or off
   if (hour == displayOffHour && displayOnHour != displayOffHour && !displayOff) /// turn off power supply
@@ -188,19 +220,80 @@ void loop()
   }
   if (minute == nextPoisonRunMinute)
   {
+    nextPoisonRunMinute = (nextPoisonRunMinute + poisonTimeSpan) % 60;
     Nixies.antiPoison();
     // matrix.antiPoison();
-    nextPoisonRunMinute = nextPoisonRunMinute + poisonTimeSpan;
-    if (nextPoisonRunMinute > 59)
-      nextPoisonRunMinute = nextPoisonRunMinute - 60;
+  }
+  // weather section
+  if (minute == nextMinuteToUpdateWeather)
+  {
+    nextMinuteToUpdateWeather = (minute + weatherCheckFreqMin) % 60;
+    Serial.println("UPDATE WEATHER");
+    updateWeather();
+    displayVFDWeather();
+    displayMatrixWeather();
   }
   // VFD section
-  displayWeather();
-  if (readButton(REGIME_BTN_PIN))
-    vfdDisplayMode = !vfdDisplayMode;
+  if (millis() > userNotifyTimer + 1000)
+  {
+    Serial.println("usernotif");
+    Serial.println(userNotifyTimer);
+    Serial.println(millis());
+    userNotifyTimer = UINT32_MAX - 1001; // set to max value
+    Serial.println(userNotifyTimer);
+    displayVFDWeather();
+  }
+  if (vfdDisplayMode == 2) // if in rotate mode, do the rotation. otherwise we update it when we refresh the forecast
+  {
+    if (second == nextSecondToChangeVFDMode)
+    {
+      nextSecondToChangeVFDMode = (nextSecondToChangeVFDMode + 15) % 60;
+      vfdCurrentDisplay = !vfdCurrentDisplay;
+      if (vfdCurrentDisplay)
+      {
+        digitalWrite(NOW_LED_PIN, HIGH);
+        digitalWrite(TMRW_LED_PIN, LOW);
+      }
+      else
+      {
+        digitalWrite(NOW_LED_PIN, LOW);
+        digitalWrite(TMRW_LED_PIN, HIGH);
+      }
+      displayVFDWeather();
+    }
+  }
+  if (2 < 1) // readButton(VFD_MODE_BTN_PIN))
+  {
+    Serial.println("REGIME");
+    vfdDisplayMode = (vfdDisplayMode + 1) % 3;
+    switch (vfdDisplayMode)
+    {
+    case 0:
+      ivtubes.shiftOutString("Today");
+      break;
+    case 1:
+      ivtubes.shiftOutString("tmrw");
+      break;
+    case 2:
+      nextSecondToChangeVFDMode = 0;
+      ivtubes.shiftOutString("DYN");
+    }
+    userNotifyTimer = millis();
+  }
 
   // matrix section
+  if (digitalRead(DYN_STAT_SW_PIN) != currentMatrixDisplayMode)
+  {
+    currentMatrixDisplayMode != currentMatrixDisplayMode;
+    displayMatrixWeather();
+  }
+  if (digitalRead(NOW_TMRW_SW_PIN) != currentMatrixDisplayTime)
+  {
+    currentMatrixDisplayTime != currentMatrixDisplayTime;
+    displayMatrixWeather();
+  }
 
+  // matrix.animateDisplay();
   // printLocalTime();
 }
 
@@ -427,14 +520,64 @@ void displayDate()
 {
   Nixies.writeToNixie(month, day, year - 2000, (second % 2 ? ALLOFF : 6));
 }
-void updateWeather()
+void updateWeather() // for now, focus on openWeatherMap
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    // generated code below
+    // Courtesy of https://arduinojson.org/v6/assistant
+    // Stream& input;
+
+    StaticJsonDocument<272> filter;
+
+    JsonObject filter_current = filter.createNestedObject("current");
+    filter_current["temp"] = true;
+    filter_current["weather"][0]["id"] = true;
+    filter["hourly"][0]["pop"] = true;
+
+    JsonObject filter_daily_0 = filter["daily"].createNestedObject();
+    filter_daily_0["pop"] = true;
+
+    JsonObject filter_daily_0_temp = filter_daily_0.createNestedObject("temp");
+    filter_daily_0_temp["day"] = true;
+    filter_daily_0_temp["night"] = true;
+    filter_daily_0["weather"][0]["id"] = true;
+
+    DynamicJsonDocument doc(3072);
+
+    DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
+
+    if (error)
+    {
+      Serial.print("deserializeJson() failed: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    // current
+    currentTemp = doc["current"]["temp"]; // 65.62
+    currentID = doc["current"]["weather"][0]["id"];
+    // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
+    currentPOP = doc["daily"][0]["pop"];
+    // might need to just get pop from the daily forcast. this looks like itll be wrong.
+    //  tomorrow
+    tmrwDayTemp = doc["daily"][1]["temp"]["day"];
+    tmrwPOP = doc["daily"][1]["pop"];
+    tmrwID = doc["daily"][1]["weather"][0]["id"];
+  }
+  else
+  {
+    Serial.println("WiFi Disconnected");
+  }
+}
+void updateWeather_WeatherAPI()
 {
   if (WiFi.status() == WL_CONNECTED)
   {
     DynamicJsonDocument doc(8192);
 
-    String forecast = httpGETRequest(forecastURL.c_str());  //for some reason I cant just directly put this into the deserialize.
-    Serial.println(forecast);
+    String forecast = httpGETRequest(forecastURL.c_str()); // for some reason I cant just directly put this into the deserialize.
+    // Serial.println(forecast);
     DeserializationError error = deserializeJson(doc, forecast);
     if (error)
     {
@@ -458,21 +601,44 @@ void updateWeather()
     tmrwDayTemp = doc["forecast"]["forecastday"][1]["day"]["maxtemp_f"];
     tomorrowCode = doc["forecast"]["forecastday"][1]["day"]["condition"]["code"];
     tmrwPOP = doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_rain"] > doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_snow"] ? doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_rain"] : doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_snow"]; // pick snow or rain to display based on whichever is better
-
-    Serial.println(currentTemp);
-    Serial.println(currentPOP);
-    Serial.println(currentCode);
-    Serial.println(tmrwDayTemp);
-    Serial.println(tmrwPOP);
-    Serial.println(tomorrowCode);
   }
   else
   {
     Serial.println("WiFi Disconnected");
   }
 }
-void displayWeather() {}
+void displayVFDWeather()
+{
+  char *weatherVFD = (char *)malloc(7);
+  // todo, maybe round
 
+  if (vfdCurrentDisplay)
+  {
+    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(currentTemp), int(currentPOP * 100));
+    digitalWrite(NOW_LED_PIN, HIGH);
+    digitalWrite(TMRW_LED_PIN, LOW);
+  }
+  else
+  {
+    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(tmrwDayTemp), int(tmrwPOP * 100));
+    digitalWrite(NOW_LED_PIN, LOW);
+    digitalWrite(TMRW_LED_PIN, HIGH);
+  }
+  ivtubes.shiftOutString(weatherVFD);
+
+  Serial.println(currentTemp);
+  Serial.println(currentPOP);
+  Serial.println(currentID);
+  Serial.println(tmrwDayTemp);
+  Serial.println(tmrwPOP);
+  Serial.println(tmrwID);
+  Serial.println(weatherVFD);
+  free(weatherVFD);
+}
+void displayMatrixWeather()
+{
+  
+}
 String httpGETRequest(const char *serverName)
 {
   HTTPClient http;
