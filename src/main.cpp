@@ -32,9 +32,9 @@
 #define IV17_CLK_PIN 32
 #define IV17_BLNK_PIN 33
 
-#define IN12_LATCH_PIN 23 //clk
+#define IN12_LATCH_PIN 23 // clk
 #define IN12_DATA_PIN 21
-#define IN12_CLK_PIN 22 //srclk
+#define IN12_CLK_PIN 22 // srclk
 
 // the rotatry encoder has built in pull ups. Can use the input only pins for those
 #define ROTCLK_PIN 36 // VP
@@ -137,9 +137,11 @@ void updateWeather();
 void displayVFDWeather();
 void displayMatrixWeather();
 String httpGETRequest(const char *serverName);
+boolean isBetweenHours(int hour, int displayOffHour, int displayOn);
 
 void setup()
 {
+  delay(500);
   Serial.begin(115200);
   Serial.println("ON");
 
@@ -157,7 +159,7 @@ void setup()
   pinMode(TMRW_LED_PIN, OUTPUT);
   pinMode(WIFI_LED_PIN, OUTPUT);
 
-  digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH);  //turn on power
+  digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH); // turn on power
   nextPoisonRunMinute = poisonTimeStart + poisonTimeSpan;
 
   // connect to WiFi
@@ -165,7 +167,9 @@ void setup()
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED)
   {
-    delay(500);
+    ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 300);
+    ivtubes.scrollString();
+    delay(300);
     Serial.print(".");
   }
   Serial.println(" CONNECTED");
@@ -182,19 +186,33 @@ void loop()
   displayVFDWeather();
   delay(10000);
 
-  // Display on or off
-  if (hour == displayOffHour && displayOnHour != displayOffHour && !displayOff) /// turn off power supply
+  if (1 > 2) // digitalRead(ON_OFF_SW_PIN)) // HIGH, switch is off, in auto position
   {
-    digitalWrite(SHUTDOWN_SUPPLY_PIN, LOW);
+    if (isBetweenHours(hour, displayOffHour, displayOnHour) && !displayOff) // turn off supply
+    {
+      digitalWrite(SHUTDOWN_SUPPLY_PIN, LOW);
+      displayOff = true;
+
+      // Configure wakeup time to wake up at displayOnHour
+      uint64_t wakeup_interval_us = ((displayOnHour - hour + 24) % 24) * 3600 * 1000000; // Calculate the time until displayOnHour
+      esp_sleep_enable_timer_wakeup(wakeup_interval_us);
+
+      // Enter deep sleep mode
+      esp_deep_sleep_start();
+    }
+    else if (displayOff)
+    {
+      displayOff = false;
+      digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH);
+    }
+    if (displayOff)
+      delay(10000); // no need to run through the loop while display is turned off
   }
-  if (hour == displayOnHour && displayOnHour != displayOffHour && displayOff) /// turn back on
+  else if (displayOff)
   {
-    displayOff = !displayOff;
+    displayOff = false;
     digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH);
   }
-  if (displayOff)
-    delay(60000); // no need to run through the loop while display is turned off
-
   // NixieTube section
   timeDateDisplayMode = changeMode(timeDateDisplayMode, 2);
   updateDateTime(); // update the time vars
@@ -262,7 +280,7 @@ void loop()
       displayVFDWeather();
     }
   }
-  if (2 < 1) // readButton(VFD_MODE_BTN_PIN))
+  if (2 < 1) // readButton(VFD_MODE_BTN_PIN)) //DISABLE FOR NOW SINCE HARDWARE PULL-UP
   {
     Serial.println("REGIME");
     vfdDisplayMode = (vfdDisplayMode + 1) % 3;
@@ -418,7 +436,7 @@ void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3
 
 void setAntiPoisonMinute()
 {
-  ivtubes.setScrollingString("Anti Poison Timer", 500); // todo, add flag to user input to scroll text
+  ivtubes.setScrollingString("Anti Poison Timer", 300); // todo, add flag to user input to scroll text
   uint8_t digits[3] = {poisonTimeStart, 255, poisonTimeSpan};
   uint8_t minValues[3] = {0, 0, 5};
   uint8_t maxValues[3] = {59, 0, 45};
@@ -428,7 +446,7 @@ void setAntiPoisonMinute()
 }
 void setTransitionMode()
 {
-  ivtubes.setScrollingString("Nixie Transition Mode", 500); // todo, add flag to user input to scroll text
+  ivtubes.setScrollingString("Nixie Transition Mode", 300); // todo, add flag to user input to scroll text
   uint8_t digits[3] = {255, 255, ClockTransitionMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
@@ -453,11 +471,17 @@ void setHourDisplayMode()
 }
 void setOnOffTime()
 {
-  ivtubes.setScrollingString("On Hour / Off Hour", 500);
+  ivtubes.setScrollingString("On Hour / Off Hour", 300);
   uint8_t digits[3] = {displayOnHour, 255, displayOffHour};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {23, 0, 23};
   userInputClock(digits, minValues, maxValues, ALLOFF);
+  if (digits[2] == digits[0])
+  {
+    ivtubes.setScrollingString("CANNOT SET ON AND OFF TIME TO BE THE SAME", 300);
+    ivtubes.scrollStringSync();
+    return;
+  }
   EEPROM.write(OFF_HOUR_ADDRESS, digits[2]); // commit change to EEPROM
   EEPROM.write(ON_HOUR_ADDRESS, digits[0]);  // commit change to EEPROM
 }
@@ -492,7 +516,7 @@ void updateDateTime()
   if (!getLocalTime(&timeinfo))
   {
     Serial.println("Failed to obtain time");
-    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 500);
+    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 300);
     ivtubes.scrollStringSync();
     return;
   }
@@ -637,7 +661,6 @@ void displayVFDWeather()
 }
 void displayMatrixWeather()
 {
-  
 }
 String httpGETRequest(const char *serverName)
 {
@@ -662,4 +685,18 @@ String httpGETRequest(const char *serverName)
   }
   http.end();
   return payload;
+}
+bool isBetweenHours(int hour, int displayOffHour, int displayOnHour)
+{
+  // Check if the hour is greater than or equal to displayOffHour
+  // and less than displayOnHour, taking into account the 24-hour clock.
+  if (displayOffHour < displayOnHour)
+  {
+    return (hour >= displayOffHour && hour < displayOnHour);
+  }
+  else
+  {
+    // Handle the case when displayOnHour crosses midnight
+    return (hour >= displayOffHour || hour < displayOnHour);
+  }
 }
