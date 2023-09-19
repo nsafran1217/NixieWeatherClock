@@ -379,6 +379,7 @@ void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3
       {
         memcpy(tempDigits, digits, sizeof(uint8_t) * 3);
         delay(3);
+        ivtubes.scrollString();
         if (readButton(ROTBTTN_PIN))
         {
           lastBlinkTime = millis(); // reset timer
@@ -436,7 +437,7 @@ void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3
 
 void setAntiPoisonMinute()
 {
-  ivtubes.setScrollingString("Anti Poison Timer", 300); // todo, add flag to user input to scroll text
+  ivtubes.setScrollingString("Anti Poison Timer", 300); 
   uint8_t digits[3] = {poisonTimeStart, 255, poisonTimeSpan};
   uint8_t minValues[3] = {0, 0, 5};
   uint8_t maxValues[3] = {59, 0, 45};
@@ -446,7 +447,7 @@ void setAntiPoisonMinute()
 }
 void setTransitionMode()
 {
-  ivtubes.setScrollingString("Nixie Transition Mode", 300); // todo, add flag to user input to scroll text
+  ivtubes.setScrollingString("Nixie Transition Mode", 300); 
   uint8_t digits[3] = {255, 255, ClockTransitionMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
@@ -455,6 +456,7 @@ void setTransitionMode()
 }
 void setRotationSpeed()
 {
+  ivtubes.setScrollingString("Date/Time display rotate speed", 300);
   uint8_t digits[3] = {255, 255, dateTimeDisplayRotateSpeed};
   uint8_t minValues[3] = {0, 0, 4};
   uint8_t maxValues[3] = {0, 0, 59};
@@ -463,6 +465,7 @@ void setRotationSpeed()
 }
 void setHourDisplayMode()
 {
+  ivtubes.setScrollingString("12/24 hour mode", 300);
   uint8_t digits[3] = {255, 255, twentyFourHourMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
