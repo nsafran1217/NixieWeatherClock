@@ -23,8 +23,8 @@
 #define POISON_TIME_START_ADDRESS 7
 
 #define INS1_LATCH_PIN 16 // u2_rxd
-#define INS1_DATA_PIN 17  // u2_txd
-#define INS1_CLK_PIN 18
+#define INS1_DATA_PIN 18
+#define INS1_CLK_PIN 17  // u2_txd
 #define INS1_BLNK_PIN 19
 
 #define IV17_DATA_PIN 26
@@ -79,7 +79,7 @@ String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minu
 String forecastURL = "http://api.weatherapi.com/v1/forecast.json?key=" + String(apiKey) + "&q=" + String(zipCode) + "&days=2&aqi=no&alerts=no";
 
 // Setup Devices
-INS1Matrix matrix = INS1Matrix(INS1_DATA_PIN, INS1_CLK_PIN, INS1_LATCH_PIN, INS1_BLNK_PIN, false, INS1_DISPLAYS);
+INS1Matrix matrix = INS1Matrix(INS1_DATA_PIN, INS1_CLK_PIN, INS1_LATCH_PIN, INS1_BLNK_PIN, true, INS1_DISPLAYS);
 IV17 ivtubes = IV17(IV17_DATA_PIN, IV17_CLK_PIN, IV17_STRB_PIN, IV17_BLNK_PIN, IV17_DISPLAYS);
 NixieBoard Nixies = NixieBoard(IN12_DATA_PIN, IN12_CLK_PIN, IN12_LATCH_PIN);
 // Global Vars
