@@ -13,18 +13,19 @@
 #include <icons.h>
 
 // EEPROM ADDRESSES
-#define EEPROM_CRC_ADDRESS 20
-#define TWELVE_HOUR_MODE_ADDRESS 1
-#define ROTATE_TIME_ADDRESS 2
-#define TRANS_MODE_ADDRESS 3
-#define ON_HOUR_ADDRESS 4
-#define OFF_HOUR_ADDRESS 5
-#define POISON_TIME_SPAN_ADDRESS 6
-#define POISON_TIME_START_ADDRESS 7
+// EEPROM ADDRESSES
+#define EEPROM_CRC_ADDRESS 0
+#define TWELVE_HOUR_MODE_ADDRESS 4
+#define ROTATE_TIME_ADDRESS (TWELVE_HOUR_MODE_ADDRESS + sizeof(uint8_t))
+#define TRANS_MODE_ADDRESS (ROTATE_TIME_ADDRESS + sizeof(uint8_t))
+#define ON_HOUR_ADDRESS (TRANS_MODE_ADDRESS + sizeof(uint8_t))
+#define OFF_HOUR_ADDRESS (ON_HOUR_ADDRESS + sizeof(uint8_t))
+#define POISON_TIME_SPAN_ADDRESS (OFF_HOUR_ADDRESS + sizeof(uint8_t))
+#define POISON_TIME_START_ADDRESS (POISON_TIME_SPAN_ADDRESS + sizeof(uint8_t))
 
 #define INS1_LATCH_PIN 16 // u2_rxd
 #define INS1_DATA_PIN 18
-#define INS1_CLK_PIN 17  // u2_txd
+#define INS1_CLK_PIN 17 // u2_txd
 #define INS1_BLNK_PIN 19
 
 #define IV17_DATA_PIN 26
@@ -112,14 +113,18 @@ boolean displayOff = false;           // are the power supplies turned off?
 boolean currentMatrixDisplayMode = 0; // dynamic or static
 boolean currentMatrixDisplayTime = 0; // tmrw or now
 uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
-
-uint8_t dateTimeDisplayRotateSpeed = EEPROM.read(ROTATE_TIME_ADDRESS); // time in second, min 4, max 59
-boolean twentyFourHourMode = EEPROM.read(TWELVE_HOUR_MODE_ADDRESS);    // 0 for 12, 1 for 24
-uint8_t ClockTransitionMode = EEPROM.read(TRANS_MODE_ADDRESS);
-uint8_t displayOnHour = EEPROM.read(ON_HOUR_ADDRESS);
-uint8_t displayOffHour = EEPROM.read(OFF_HOUR_ADDRESS);
-uint8_t poisonTimeSpan = EEPROM.read(POISON_TIME_SPAN_ADDRESS);
-uint8_t poisonTimeStart = EEPROM.read(POISON_TIME_START_ADDRESS);
+// Define a structure to hold your user-defined values
+struct DeviceSettings
+{
+  bool twentyFourHourMode;
+  uint8_t dateTimeDisplayRotateSpeed;
+  uint8_t ClockTransitionMode;
+  uint8_t displayOnHour;
+  uint8_t displayOffHour;
+  uint8_t poisonTimeSpan;
+  uint8_t poisonTimeStart;
+};
+DeviceSettings settings;
 
 // FUNCTIONS
 int readRotEncoder(int counter);
@@ -139,11 +144,58 @@ void displayMatrixWeather();
 String httpGETRequest(const char *serverName);
 boolean isBetweenHours(int hour, int displayOffHour, int displayOn);
 
+uint32_t calculateCRC(const DeviceSettings &settings);
+bool readEEPROMWithCRC(DeviceSettings &settings);
+void writeEEPROMWithCRC(const DeviceSettings &settings);
+
+void printDeviceSettings(const DeviceSettings &settings)
+{
+  Serial.println("Device Settings:");
+  Serial.print("Twenty-Four Hour Mode: ");
+  Serial.println(settings.twentyFourHourMode ? "Enabled" : "Disabled");
+  Serial.print("Date/Time Display Rotate Speed: ");
+  Serial.println(settings.dateTimeDisplayRotateSpeed);
+  Serial.print("Clock Transition Mode: ");
+  Serial.println(settings.ClockTransitionMode);
+  Serial.print("Display On Hour: ");
+  Serial.println(settings.displayOnHour);
+  Serial.print("Display Off Hour: ");
+  Serial.println(settings.displayOffHour);
+  Serial.print("Poison Time Span: ");
+  Serial.println(settings.poisonTimeSpan);
+  Serial.print("Poison Time Start: ");
+  Serial.println(settings.poisonTimeStart);
+}
+
 void setup()
 {
   delay(500);
   Serial.begin(115200);
   Serial.println("ON");
+
+  EEPROM.begin(512);
+  bool settingsValid = readEEPROMWithCRC(settings);
+  printDeviceSettings(settings);
+  if (!settingsValid)
+  {
+    Serial.println("CRC BAD");
+    settings.displayOffHour = 0;
+    settings.displayOnHour = 5;
+    settings.poisonTimeSpan = 10;
+    settings.poisonTimeStart = 10;
+    settings.dateTimeDisplayRotateSpeed = 15;
+    settings.ClockTransitionMode = 1;
+    settings.twentyFourHourMode = 1;
+    writeEEPROMWithCRC(settings);
+
+    EEPROM.commit();
+  }
+  else
+  {
+    Serial.println("CRC GOOD");
+  }
+  Serial.println(EEPROM.read(POISON_TIME_SPAN_ADDRESS));
+  delay(30000);
 
   pinMode(SHUTDOWN_SUPPLY_PIN, OUTPUT);
   pinMode(ROTCLK_PIN, INPUT);
@@ -160,19 +212,22 @@ void setup()
   pinMode(WIFI_LED_PIN, OUTPUT);
 
   digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH); // turn on power
-  nextPoisonRunMinute = poisonTimeStart + poisonTimeSpan;
+  nextPoisonRunMinute = settings.poisonTimeStart + settings.poisonTimeSpan;
 
   // connect to WiFi
   Serial.printf("Connecting to %s ", ssid);
   WiFi.begin(ssid, password);
+  ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 200);
   while (WiFi.status() != WL_CONNECTED)
   {
-    ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 300);
     ivtubes.scrollString();
-    delay(300);
+    delay(100);
     Serial.print(".");
   }
   Serial.println(" CONNECTED");
+  WiFi.setSleep(true);
+  ivtubes.setScrollingString("ПОДКЛЮЧЕН", 200);
+  ivtubes.scrollStringSync();
 
   // init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
@@ -183,18 +238,18 @@ void setup()
 
 void loop()
 {
-  displayVFDWeather();
-  delay(10000);
+  // displayVFDWeather();
+  delay(5);
 
   if (1 > 2) // digitalRead(ON_OFF_SW_PIN)) // HIGH, switch is off, in auto position
   {
-    if (isBetweenHours(hour, displayOffHour, displayOnHour) && !displayOff) // turn off supply
+    if (isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour) && !displayOff) // turn off supply
     {
       digitalWrite(SHUTDOWN_SUPPLY_PIN, LOW);
       displayOff = true;
 
       // Configure wakeup time to wake up at displayOnHour
-      uint64_t wakeup_interval_us = ((displayOnHour - hour + 24) % 24) * 3600 * 1000000; // Calculate the time until displayOnHour
+      uint64_t wakeup_interval_us = ((settings.displayOnHour - hour + 24) % 24) * 3600 * 1000000; // Calculate the time until displayOnHour
       esp_sleep_enable_timer_wakeup(wakeup_interval_us);
 
       // Enter deep sleep mode
@@ -227,7 +282,7 @@ void loop()
   case 2:
     if (second == nextSecondToChangeDateTimeModes)
     {
-      nextSecondToChangeDateTimeModes = ((second + dateTimeDisplayRotateSpeed) % 60);
+      nextSecondToChangeDateTimeModes = ((second + settings.dateTimeDisplayRotateSpeed) % 60);
       displayDateOrTime != displayDateOrTime;
     }
     if (displayDateOrTime)
@@ -238,7 +293,7 @@ void loop()
   }
   if (minute == nextPoisonRunMinute)
   {
-    nextPoisonRunMinute = (nextPoisonRunMinute + poisonTimeSpan) % 60;
+    nextPoisonRunMinute = (nextPoisonRunMinute + settings.poisonTimeSpan) % 60;
     Nixies.antiPoison();
     // matrix.antiPoison();
   }
@@ -437,45 +492,49 @@ void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3
 
 void setAntiPoisonMinute()
 {
-  ivtubes.setScrollingString("Anti Poison Timer", 300); 
-  uint8_t digits[3] = {poisonTimeStart, 255, poisonTimeSpan};
+  ivtubes.setScrollingString("Anti Poison Timer", 300);
+  uint8_t digits[3] = {settings.poisonTimeStart, 255, settings.poisonTimeSpan};
   uint8_t minValues[3] = {0, 0, 5};
   uint8_t maxValues[3] = {59, 0, 45};
   userInputClock(digits, minValues, maxValues, ALLOFF);
-  EEPROM.write(POISON_TIME_START_ADDRESS, digits[0]); // commit change to EEPROM
-  EEPROM.write(POISON_TIME_SPAN_ADDRESS, digits[2]);  // commit change to EEPROM
+  settings.poisonTimeStart = digits[0];
+  settings.poisonTimeSpan = digits[2];
+  writeEEPROMWithCRC(settings);
 }
 void setTransitionMode()
 {
-  ivtubes.setScrollingString("Nixie Transition Mode", 300); 
-  uint8_t digits[3] = {255, 255, ClockTransitionMode};
+  ivtubes.setScrollingString("Nixie Transition Mode", 300);
+  uint8_t digits[3] = {255, 255, settings.ClockTransitionMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
   userInputClock(digits, minValues, maxValues, ALLOFF);
-  EEPROM.write(TRANS_MODE_ADDRESS, digits[2]); // commit change to EEPROM
+  settings.ClockTransitionMode = digits[2];
+  writeEEPROMWithCRC(settings);
 }
 void setRotationSpeed()
 {
   ivtubes.setScrollingString("Date/Time display rotate speed", 300);
-  uint8_t digits[3] = {255, 255, dateTimeDisplayRotateSpeed};
+  uint8_t digits[3] = {255, 255, settings.dateTimeDisplayRotateSpeed};
   uint8_t minValues[3] = {0, 0, 4};
   uint8_t maxValues[3] = {0, 0, 59};
   userInputClock(digits, minValues, maxValues, ALLOFF);
-  EEPROM.write(ROTATE_TIME_ADDRESS, digits[2]); // commit change to EEPROM
+  settings.dateTimeDisplayRotateSpeed = digits[2];
+  writeEEPROMWithCRC(settings);
 }
 void setHourDisplayMode()
 {
   ivtubes.setScrollingString("12/24 hour mode", 300);
-  uint8_t digits[3] = {255, 255, twentyFourHourMode};
+  uint8_t digits[3] = {255, 255, settings.twentyFourHourMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
   userInputClock(digits, minValues, maxValues, ALLOFF);
-  EEPROM.write(TWELVE_HOUR_MODE_ADDRESS, (boolean)digits[2]); // commmit change to EEPROM
+  settings.twentyFourHourMode = (boolean)digits[2];
+  writeEEPROMWithCRC(settings);
 }
 void setOnOffTime()
 {
   ivtubes.setScrollingString("On Hour / Off Hour", 300);
-  uint8_t digits[3] = {displayOnHour, 255, displayOffHour};
+  uint8_t digits[3] = {settings.displayOnHour, 255, settings.displayOffHour};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {23, 0, 23};
   userInputClock(digits, minValues, maxValues, ALLOFF);
@@ -487,10 +546,12 @@ void setOnOffTime()
   }
   EEPROM.write(OFF_HOUR_ADDRESS, digits[2]); // commit change to EEPROM
   EEPROM.write(ON_HOUR_ADDRESS, digits[0]);  // commit change to EEPROM
+  writeEEPROMWithCRC(settings);
 }
 int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode on tube, easy for selecting
 {
   // this can be shortened
+  Serial.println(mode);
   int lastmode = mode;
   mode = readRotEncoder(mode);
   if (mode > numOfModes) // if mode invalid, loop around
@@ -519,7 +580,7 @@ void updateDateTime()
   if (!getLocalTime(&timeinfo))
   {
     Serial.println("Failed to obtain time");
-    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 300);
+    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 150);
     ivtubes.scrollStringSync();
     return;
   }
@@ -534,13 +595,13 @@ void updateDateTime()
 }
 void displayTime()
 {
-  if (ClockTransitionMode)
+  if (settings.ClockTransitionMode)
   {
-    Nixies.writeToNixieScroll((twentyFourHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+    Nixies.writeToNixieScroll((settings.twentyFourHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
   }
   else
   {
-    Nixies.writeToNixie((twentyFourHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+    Nixies.writeToNixie((settings.twentyFourHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
   }
 }
 void displayDate()
@@ -702,4 +763,63 @@ bool isBetweenHours(int hour, int displayOffHour, int displayOnHour)
     // Handle the case when displayOnHour crosses midnight
     return (hour >= displayOffHour || hour < displayOnHour);
   }
+}
+
+// Calculate CRC32 (simple algorithm)
+uint32_t calculateCRC(const DeviceSettings &settings)
+{
+  uint32_t crc = 0;
+  const uint8_t *data = reinterpret_cast<const uint8_t *>(&settings);
+  int dataSize = sizeof(settings);
+
+  for (int i = 0; i < dataSize; ++i)
+  {
+    crc ^= (uint32_t)data[i] << 24;
+    for (int j = 0; j < 8; ++j)
+    {
+      if (crc & 0x80000000)
+      {
+        crc = (crc << 1) ^ 0x04C11DB7; // CRC-32 polynomial
+      }
+      else
+      {
+        crc <<= 1;
+      }
+    }
+  }
+
+  return crc;
+}
+
+// Read EEPROM and verify CRC
+bool readEEPROMWithCRC(DeviceSettings &settings)
+{
+  uint32_t storedCRC;
+  EEPROM.get(EEPROM_CRC_ADDRESS, storedCRC);
+
+  DeviceSettings tempSettings;
+  EEPROM.get(TWELVE_HOUR_MODE_ADDRESS, tempSettings);
+
+  if (storedCRC == calculateCRC(tempSettings))
+  {
+    settings = tempSettings;
+    return true; // CRC matches, data is valid
+  }
+  else
+  {
+    return false;
+  }
+}
+
+// Write EEPROM with CRC
+void writeEEPROMWithCRC(const DeviceSettings &settings)
+{
+  // Write settings to EEPROM
+  EEPROM.put(TWELVE_HOUR_MODE_ADDRESS, settings);
+
+  // Calculate CRC for the data in EEPROM
+  uint32_t calculatedCRC = calculateCRC(settings);
+
+  // Write CRC to EEPROM
+  EEPROM.put(EEPROM_CRC_ADDRESS, calculatedCRC);
 }
