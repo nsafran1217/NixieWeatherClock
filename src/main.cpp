@@ -127,10 +127,13 @@ struct DeviceSettings
 DeviceSettings settings;
 
 // FUNCTIONS
+void settingsMenu();
+void newSettingsMenu(DeviceSettings &settings);
 int readRotEncoder(int counter);
 boolean readButton(uint8_t pin);
 void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3], uint8_t colons);
 void setAntiPoisonMinute();
+void setRotationSpeed();
 void setTransitionMode();
 void setHourDisplayMode();
 void setOnOffTime();
@@ -140,6 +143,7 @@ void displayTime();
 void displayDate();
 void updateWeather();
 void displayVFDWeather();
+void setMatrixWeatherDisplay();
 void displayMatrixWeather();
 String httpGETRequest(const char *serverName);
 boolean isBetweenHours(int hour, int displayOffHour, int displayOn);
@@ -148,34 +152,14 @@ uint32_t calculateCRC(const DeviceSettings &settings);
 bool readEEPROMWithCRC(DeviceSettings &settings);
 void writeEEPROMWithCRC(const DeviceSettings &settings);
 
-void printDeviceSettings(const DeviceSettings &settings)
-{
-  Serial.println("Device Settings:");
-  Serial.print("Twenty-Four Hour Mode: ");
-  Serial.println(settings.twentyFourHourMode ? "Enabled" : "Disabled");
-  Serial.print("Date/Time Display Rotate Speed: ");
-  Serial.println(settings.dateTimeDisplayRotateSpeed);
-  Serial.print("Clock Transition Mode: ");
-  Serial.println(settings.ClockTransitionMode);
-  Serial.print("Display On Hour: ");
-  Serial.println(settings.displayOnHour);
-  Serial.print("Display Off Hour: ");
-  Serial.println(settings.displayOffHour);
-  Serial.print("Poison Time Span: ");
-  Serial.println(settings.poisonTimeSpan);
-  Serial.print("Poison Time Start: ");
-  Serial.println(settings.poisonTimeStart);
-}
-
 void setup()
 {
   delay(500);
   Serial.begin(115200);
   Serial.println("ON");
 
-  EEPROM.begin(512);
+  EEPROM.begin(128);
   bool settingsValid = readEEPROMWithCRC(settings);
-  printDeviceSettings(settings);
   if (!settingsValid)
   {
     Serial.println("CRC BAD");
@@ -194,8 +178,6 @@ void setup()
   {
     Serial.println("CRC GOOD");
   }
-  Serial.println(EEPROM.read(POISON_TIME_SPAN_ADDRESS));
-  delay(30000);
 
   pinMode(SHUTDOWN_SUPPLY_PIN, OUTPUT);
   pinMode(ROTCLK_PIN, INPUT);
@@ -212,21 +194,24 @@ void setup()
   pinMode(WIFI_LED_PIN, OUTPUT);
 
   digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH); // turn on power
+  currentStateCLK = digitalRead(ROTCLK_PIN);
+  lastStateCLK = currentStateCLK;
+
   nextPoisonRunMinute = settings.poisonTimeStart + settings.poisonTimeSpan;
 
   // connect to WiFi
   Serial.printf("Connecting to %s ", ssid);
   WiFi.begin(ssid, password);
-  ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 200);
+  ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 150); // connecting to wifi
   while (WiFi.status() != WL_CONNECTED)
   {
     ivtubes.scrollString();
-    delay(100);
+    delay(75);
     Serial.print(".");
   }
   Serial.println(" CONNECTED");
-  WiFi.setSleep(true);
-  ivtubes.setScrollingString("ПОДКЛЮЧЕН", 200);
+  WiFi.setSleep(true);                          // enable wifi sleep for power savings
+  ivtubes.setScrollingString("ПОДКЛЮЧЕН", 150); // connected
   ivtubes.scrollStringSync();
 
   // init and get the time
@@ -234,22 +219,27 @@ void setup()
   updateDateTime();
   nextMinuteToUpdateWeather = ((minute / 10) * 10) + 10;
   updateWeather();
+
+  setCpuFrequencyMhz(80); // slow down for power savings
+  delay(1000);
 }
 
 void loop()
 {
   // displayVFDWeather();
-  delay(5);
+  // delay(5);
 
-  if (1 > 2) // digitalRead(ON_OFF_SW_PIN)) // HIGH, switch is off, in auto position
+  if (digitalRead(ON_OFF_SW_PIN)) // HIGH, switch is off, in auto position
   {
     if (isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour) && !displayOff) // turn off supply
     {
       digitalWrite(SHUTDOWN_SUPPLY_PIN, LOW);
       displayOff = true;
+      Serial.println("SLEEPING");
 
       // Configure wakeup time to wake up at displayOnHour
-      uint64_t wakeup_interval_us = ((settings.displayOnHour - hour + 24) % 24) * 3600 * 1000000; // Calculate the time until displayOnHour
+      uint64_t wakeup_interval_us = ((((settings.displayOnHour - hour + 24) % 24) * 3600) - (minute * 60) - second) * 1000000; // Calculate the time until displayOnHour
+      esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
       esp_sleep_enable_timer_wakeup(wakeup_interval_us);
 
       // Enter deep sleep mode
@@ -270,8 +260,8 @@ void loop()
   }
   // NixieTube section
   timeDateDisplayMode = changeMode(timeDateDisplayMode, 2);
-  updateDateTime(); // update the time vars
-  switch (timeDateDisplayMode)
+  updateDateTime();            // update the time vars
+  switch (timeDateDisplayMode) // rotate, or just display date or time
   {
   case 0:
     displayTime();
@@ -298,16 +288,17 @@ void loop()
     // matrix.antiPoison();
   }
   // weather section
-  if (minute == nextMinuteToUpdateWeather)
+  if (minute == nextMinuteToUpdateWeather) // update the weather forcast
   {
     nextMinuteToUpdateWeather = (minute + weatherCheckFreqMin) % 60;
     Serial.println("UPDATE WEATHER");
     updateWeather();
-    displayVFDWeather();
+    displayVFDWeather(); // only callled when we update the weather. Otherwise, its static
+    setMatrixWeatherDisplay();
     displayMatrixWeather();
   }
   // VFD section
-  if (millis() > userNotifyTimer + 1000)
+  if (millis() > userNotifyTimer + 1000) // allow time for VFD to notify user, then redisplay the weather
   {
     Serial.println("usernotif");
     Serial.println(userNotifyTimer);
@@ -335,7 +326,7 @@ void loop()
       displayVFDWeather();
     }
   }
-  if (2 < 1) // readButton(VFD_MODE_BTN_PIN)) //DISABLE FOR NOW SINCE HARDWARE PULL-UP
+  if (readButton(VFD_MODE_BTN_PIN)) // change VFD display mode
   {
     Serial.println("REGIME");
     vfdDisplayMode = (vfdDisplayMode + 1) % 3;
@@ -343,9 +334,13 @@ void loop()
     {
     case 0:
       ivtubes.shiftOutString("Today");
+      digitalWrite(NOW_LED_PIN, HIGH);
+      digitalWrite(TMRW_LED_PIN, LOW);
       break;
     case 1:
       ivtubes.shiftOutString("tmrw");
+      digitalWrite(NOW_LED_PIN, LOW);
+      digitalWrite(TMRW_LED_PIN, HIGH);
       break;
     case 2:
       nextSecondToChangeVFDMode = 0;
@@ -368,8 +363,86 @@ void loop()
 
   // matrix.animateDisplay();
   // printLocalTime();
+  // Settings section
+  if (readButton(ROTBTTN_PIN))
+  {
+    Serial.println("BUTTON");
+    settingsMenu();
+    delay(1000);
+  }
 }
+void newSettingsMenu(DeviceSettings &settings)
+{
+}
+void settingsMenu()
+{
 
+  int settingsMode = 0;
+
+  while (1)
+  {
+    Serial.println(settingsMode);
+    delay(5);
+    settingsMode = changeMode(settingsMode, 5);
+    switch (settingsMode)
+    {
+    case 0: // exit, just have number
+      ivtubes.setScrollingString("Exit", 150);
+      Nixies.writeToNixie(settingsMode, 255, 255, 0);
+      break;
+    case 1: // set date time rotation speed
+      ivtubes.setScrollingString("Date/Time display rotate speed", 150);
+      Nixies.writeToNixie(settingsMode, 255, settings.dateTimeDisplayRotateSpeed, 0);
+      break;
+    case 2: // setHourDisplay
+      ivtubes.setScrollingString("12/24 hour mode", 150);
+      Nixies.writeToNixie(255, 255, (settings.twentyFourHourMode ? 24 : 12), 0);
+      break;
+    case 3: // set setTransitionMode
+      ivtubes.setScrollingString("Nixie Transition Mode", 150);
+      Nixies.writeToNixie(255, 255, settings.ClockTransitionMode, 0);
+      break;
+    case 4: // set on off time for display
+      ivtubes.setScrollingString("On Hour / Off Hour", 150);
+      Nixies.writeToNixie(settings.displayOffHour, 255, settings.displayOnHour, 8);
+      break;
+    case 5:
+      ivtubes.setScrollingString("Anti Poison Timer", 150);
+      Nixies.writeToNixie(settings.poisonTimeStart, 255, settings.poisonTimeSpan, 8);
+      break;
+    }
+    int lastSettingsMode = settingsMode;
+    while (settingsMode = lastSettingsMode)
+    {
+      settingsMode = changeMode(settingsMode, 5);
+      Serial.println(settingsMode);
+      ivtubes.scrollString();
+      if (readButton(ROTBTTN_PIN))
+      {
+        switch (settingsMode)
+        {
+        case 0:
+          return;
+        case 1:
+          setRotationSpeed();
+          break;
+        case 2:
+          setHourDisplayMode();
+          break;
+        case 3:
+          setTransitionMode();
+          break;
+        case 4:
+          setOnOffTime();
+          break;
+        case 5:
+          setAntiPoisonMinute();
+          break;
+        }
+      }
+    }
+  }
+}
 int readRotEncoder(int counter) // takes a counter in and spits it back out if it changes
 {
   // Read the current state of CLK
@@ -486,13 +559,11 @@ void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3
       digitMod++;
     }
   }
-
-  // return
 }
 
 void setAntiPoisonMinute()
 {
-  ivtubes.setScrollingString("Anti Poison Timer", 300);
+  ivtubes.setScrollingString("Anti Poison Timer", 150);
   uint8_t digits[3] = {settings.poisonTimeStart, 255, settings.poisonTimeSpan};
   uint8_t minValues[3] = {0, 0, 5};
   uint8_t maxValues[3] = {59, 0, 45};
@@ -503,7 +574,7 @@ void setAntiPoisonMinute()
 }
 void setTransitionMode()
 {
-  ivtubes.setScrollingString("Nixie Transition Mode", 300);
+  ivtubes.setScrollingString("Nixie Transition Mode", 150);
   uint8_t digits[3] = {255, 255, settings.ClockTransitionMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
@@ -513,7 +584,7 @@ void setTransitionMode()
 }
 void setRotationSpeed()
 {
-  ivtubes.setScrollingString("Date/Time display rotate speed", 300);
+  ivtubes.setScrollingString("Date/Time display rotate speed", 150);
   uint8_t digits[3] = {255, 255, settings.dateTimeDisplayRotateSpeed};
   uint8_t minValues[3] = {0, 0, 4};
   uint8_t maxValues[3] = {0, 0, 59};
@@ -523,7 +594,7 @@ void setRotationSpeed()
 }
 void setHourDisplayMode()
 {
-  ivtubes.setScrollingString("12/24 hour mode", 300);
+  ivtubes.setScrollingString("12/24 hour mode", 150);
   uint8_t digits[3] = {255, 255, settings.twentyFourHourMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
@@ -533,14 +604,14 @@ void setHourDisplayMode()
 }
 void setOnOffTime()
 {
-  ivtubes.setScrollingString("On Hour / Off Hour", 300);
+  ivtubes.setScrollingString("On Hour / Off Hour", 150);
   uint8_t digits[3] = {settings.displayOnHour, 255, settings.displayOffHour};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {23, 0, 23};
   userInputClock(digits, minValues, maxValues, ALLOFF);
   if (digits[2] == digits[0])
   {
-    ivtubes.setScrollingString("CANNOT SET ON AND OFF TIME TO BE THE SAME", 300);
+    ivtubes.setScrollingString("CANNOT SET ON AND OFF TIME TO BE THE SAME", 150);
     ivtubes.scrollStringSync();
     return;
   }
@@ -550,25 +621,20 @@ void setOnOffTime()
 }
 int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode on tube, easy for selecting
 {
-  // this can be shortened
   Serial.println(mode);
   int lastmode = mode;
   mode = readRotEncoder(mode);
-  if (mode > numOfModes) // if mode invalid, loop around
-  {
-    mode = 0;
-  }
-  else if (mode < 0)
-  {
-    mode = numOfModes;
-  }
+
+  // Ensure mode stays within bounds
+  mode = (mode + numOfModes + 1) % (numOfModes + 1);
+
   if (mode != lastmode)
   {
     unsigned long waitForDisplay = millis();
     while (millis() - waitForDisplay < 500)
     {
-      delay(5);
-      Nixies.writeToNixie(mode, 255, 255, 0);
+      // delay(5);
+      Nixies.writeToNixie(mode, 255, 255, ALLOFF);
       mode = changeMode(mode, numOfModes);
     }
   }
@@ -577,12 +643,12 @@ int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode
 void updateDateTime()
 {
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo))
+  while (!getLocalTime(&timeinfo))
   {
     Serial.println("Failed to obtain time");
     ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 150);
     ivtubes.scrollStringSync();
-    return;
+    // return;
   }
   hour = timeinfo.tm_hour;
   minute = timeinfo.tm_min;
@@ -723,6 +789,9 @@ void displayVFDWeather()
   Serial.println(weatherVFD);
   free(weatherVFD);
 }
+void setMatrixWeatherDisplay()
+{
+}
 void displayMatrixWeather()
 {
 }
@@ -764,9 +833,7 @@ bool isBetweenHours(int hour, int displayOffHour, int displayOnHour)
     return (hour >= displayOffHour || hour < displayOnHour);
   }
 }
-
-// Calculate CRC32 (simple algorithm)
-uint32_t calculateCRC(const DeviceSettings &settings)
+uint32_t calculateCRC(const DeviceSettings &settings) // Calculate CRC32 (simple algorithm)
 {
   uint32_t crc = 0;
   const uint8_t *data = reinterpret_cast<const uint8_t *>(&settings);
@@ -790,9 +857,7 @@ uint32_t calculateCRC(const DeviceSettings &settings)
 
   return crc;
 }
-
-// Read EEPROM and verify CRC
-bool readEEPROMWithCRC(DeviceSettings &settings)
+bool readEEPROMWithCRC(DeviceSettings &settings) // Read EEPROM and verify CRC
 {
   uint32_t storedCRC;
   EEPROM.get(EEPROM_CRC_ADDRESS, storedCRC);
@@ -810,9 +875,7 @@ bool readEEPROMWithCRC(DeviceSettings &settings)
     return false;
   }
 }
-
-// Write EEPROM with CRC
-void writeEEPROMWithCRC(const DeviceSettings &settings)
+void writeEEPROMWithCRC(const DeviceSettings &settings) // Write EEPROM with CRC
 {
   // Write settings to EEPROM
   EEPROM.put(TWELVE_HOUR_MODE_ADDRESS, settings);
