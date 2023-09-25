@@ -90,6 +90,7 @@ unsigned long lastButtonPress = 0;
 // DateTime Vars
 uint8_t hour = 0, minute = 0, second = 0, month = 0, day = 0;
 int year = 0;
+uint8_t lastsecond = second;
 // Weather Vars
 struct Weather
 {
@@ -146,6 +147,7 @@ void setOnOffTime();
 int changeMode(int mode, int numOfModes);
 void updateDateTime();
 void displayTime();
+void scrollNixieTimeTask(void *parameter);
 void displayDate();
 void updateWeather();
 const uint32_t *selectIcon(const char *iconStr);
@@ -218,13 +220,11 @@ void setup()
   // analogWrite(INS1_BLNK_PIN, 50); //need to fix board polairity
   setCpuFrequencyMhz(80); // slow down for power savings
   delay(1000);
+  //setMatrixWeatherDisplay();
 }
 
 void loop()
 {
-  // displayVFDWeather();
-  // delay(5);
-
   if (digitalRead(ON_OFF_SW_PIN)) // HIGH, switch is off, in auto position
   {
     if (isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour) && !displayOff) // turn off supply
@@ -293,6 +293,7 @@ void loop()
     displayVFDWeather(); // only callled when we update the weather. Otherwise, its static
     setMatrixWeatherDisplay();
   }
+
   // VFD section
   if (millis() > userNotifyTimer + 1000) // allow time for VFD to notify user, then redisplay the weather
   {
@@ -674,69 +675,83 @@ void displayTime()
 {
   if (settings.ClockTransitionMode)
   {
-    Nixies.writeToNixieScroll((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+    if (lastsecond != second)
+    {
+
+      lastsecond = second;
+      xTaskCreate(
+          scrollNixieTimeTask,                 // Function that should be called
+          "Scroll transition mode for Nixies", // Name of the task (for debugging)
+          1000,                                // Stack size (bytes)
+          NULL,                                // Parameter to pass
+          1,                                   // Task priority
+          NULL                                 // Task handle
+      );
+    }
   }
   else
   {
     Nixies.writeToNixie((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
   }
 }
+void scrollNixieTimeTask(void *parameter) // used as a task
+{
+  Nixies.writeToNixieScroll((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+  vTaskDelete(NULL);
+}
 void displayDate()
 {
   Nixies.writeToNixie(month, day, year - 2000, (second % 2 ? ALLOFF : 6));
 }
-void updateWeather() // for now, focus on openWeatherMap
+void updateWeather() // used as a task
 {
-  if (WiFi.status() == WL_CONNECTED)
+  // char *num = (char *)malloc(7);
+  // snprintf(num, 7, "%06d", millis());
+  // ivtubes.shiftOutString(num);
+  //  generated code below
+  //  Courtesy of https://arduinojson.org/v6/assistant
+  //  Stream& input;
+  //  for openweathermap
+
+  StaticJsonDocument<272> filter;
+
+  JsonObject filter_current = filter.createNestedObject("current");
+  filter_current["temp"] = true;
+  filter_current["weather"][0]["icon"] = true;
+  filter["hourly"][0]["pop"] = true;
+
+  JsonObject filter_daily_0 = filter["daily"].createNestedObject();
+  filter_daily_0["pop"] = true;
+
+  JsonObject filter_daily_0_temp = filter_daily_0.createNestedObject("temp");
+  filter_daily_0_temp["day"] = true;
+  filter_daily_0_temp["night"] = true;
+  filter_daily_0["weather"][0]["icon"] = true;
+
+  DynamicJsonDocument doc(3072);
+
+  DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
+
+  if (error)
   {
-    // generated code below
-    // Courtesy of https://arduinojson.org/v6/assistant
-    // Stream& input;
-
-    StaticJsonDocument<272> filter;
-
-    JsonObject filter_current = filter.createNestedObject("current");
-    filter_current["temp"] = true;
-    filter_current["weather"][0]["icon"] = true;
-    filter["hourly"][0]["pop"] = true;
-
-    JsonObject filter_daily_0 = filter["daily"].createNestedObject();
-    filter_daily_0["pop"] = true;
-
-    JsonObject filter_daily_0_temp = filter_daily_0.createNestedObject("temp");
-    filter_daily_0_temp["day"] = true;
-    filter_daily_0_temp["night"] = true;
-    filter_daily_0["weather"][0]["icon"] = true;
-
-    DynamicJsonDocument doc(3072);
-
-    DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
-
-    if (error)
-    {
-      Serial.print("deserializeJson() failed: ");
-      Serial.println(error.c_str());
-      return;
-    }
-
-    // current
-    weather.currentTemp = doc["current"]["temp"]; // 65.62
-    const char *currIcon = doc["current"]["weather"][0]["icon"];
-    // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
-    weather.currentPOP = doc["daily"][0]["pop"];
-    // might need to just get pop from the daily forcast. this looks like itll be wrong.
-    //  tomorrow
-    weather.tmrwDayTemp = doc["daily"][1]["temp"]["day"];
-    weather.tmrwPOP = doc["daily"][1]["pop"];
-    const char *tmrwIcon = doc["daily"][1]["weather"][0]["icon"];
-    // copy to struct
-    strcpy(weather.currentIcon, currIcon);
-    strcpy(weather.tmrwIcon, tmrwIcon);
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return;
   }
-  else
-  {
-    Serial.println("WiFi Disconnected");
-  }
+
+  // current
+  weather.currentTemp = doc["current"]["temp"]; // 65.62
+  const char *currIcon = doc["current"]["weather"][0]["icon"];
+  // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
+  weather.currentPOP = doc["daily"][0]["pop"];
+  // might need to just get pop from the daily forcast. this looks like itll be wrong.
+  //  tomorrow
+  weather.tmrwDayTemp = doc["daily"][1]["temp"]["day"];
+  weather.tmrwPOP = doc["daily"][1]["pop"];
+  const char *tmrwIcon = doc["daily"][1]["weather"][0]["icon"];
+  // copy to struct
+  strcpy(weather.currentIcon, currIcon);
+  strcpy(weather.tmrwIcon, tmrwIcon);
 }
 const uint32_t *selectIcon(const char *iconStr)
 {

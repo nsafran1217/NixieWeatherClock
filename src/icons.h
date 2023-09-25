@@ -6,7 +6,7 @@ uint32_t allOn[4] = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
 uint32_t allOff[4] = {0, 0, 0, 0};
 
 const uint32_t testAnimation[1 + (22 * 4)] = {
-    0x001601F4, // 22 frames, 500 ms delay
+    0x001600F4, // 22 frames, 500 ms delay
     0x00000000, 0x00000000, 0x41041041, 0x00410410,
     0x00000000, 0x00000000, 0x82082082, 0x00820820,
     0x00000000, 0x00000000, 0x04104104, 0x01041041,
