@@ -91,10 +91,16 @@ unsigned long lastButtonPress = 0;
 uint8_t hour = 0, minute = 0, second = 0, month = 0, day = 0;
 int year = 0;
 // Weather Vars
-float currentTemp = 0, currentPOP = 0, tmrwDayTemp = 0, tmrwPOP = 0;
-uint16_t currentCode = 0, tomorrowCode = 0;
-uint16_t currentID = 0, tmrwID = 0;
-
+struct Weather
+{
+  float currentTemp = 0;
+  float currentPOP = 0;
+  float tmrwDayTemp = 0;
+  float tmrwPOP = 0;
+  char currentIcon[4];
+  char tmrwIcon[4];
+};
+Weather weather;
 // Timer Vars
 uint16_t userInputBlinkTime = 500;
 uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
@@ -110,8 +116,8 @@ boolean displayDateOrTime = 0;        // are we displaying the date or time
 boolean vfdCurrentDisplay = 0;        // displaying weather now, or tomorrow's forecast
 uint8_t vfdDisplayMode = 0;           // rotate, static now, static tomorrow
 boolean displayOff = false;           // are the power supplies turned off?
-boolean currentMatrixDisplayMode = 0; // dynamic or static
-boolean currentMatrixDisplayTime = 0; // tmrw or now
+boolean currentMatrixDisplayMode = 1; // dynamic or static. 1= dyn
+boolean currentMatrixDisplayTime = 1; // tmrw or now. 1 = now
 uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
 // Define a structure to hold your user-defined values
 struct DeviceSettings
@@ -142,15 +148,16 @@ void updateDateTime();
 void displayTime();
 void displayDate();
 void updateWeather();
+const uint32_t *selectIcon(const char *iconStr);
 void displayVFDWeather();
 void setMatrixWeatherDisplay();
 void displayMatrixWeather();
 String httpGETRequest(const char *serverName);
 boolean isBetweenHours(int hour, int displayOffHour, int displayOn);
-
 uint32_t calculateCRC(const DeviceSettings &settings);
 bool readEEPROMWithCRC(DeviceSettings &settings);
 void writeEEPROMWithCRC(const DeviceSettings &settings);
+void initWiFi();
 
 void setup()
 {
@@ -198,28 +205,17 @@ void setup()
   lastStateCLK = currentStateCLK;
 
   nextPoisonRunMinute = settings.poisonTimeStart + settings.poisonTimeSpan;
-
+  Nixies.writeToNixie(255, 255, 255, 0);
   // connect to WiFi
-  Serial.printf("Connecting to %s ", ssid);
-  WiFi.begin(ssid, password);
-  ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 150); // connecting to wifi
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    ivtubes.scrollString();
-    delay(75);
-    Serial.print(".");
-  }
-  Serial.println(" CONNECTED");
-  WiFi.setSleep(true);                          // enable wifi sleep for power savings
-  ivtubes.setScrollingString("ПОДКЛЮЧЕН", 150); // connected
-  ivtubes.scrollStringSync();
-
+  initWiFi();
   // init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   updateDateTime();
   nextMinuteToUpdateWeather = ((minute / 10) * 10) + 10;
   updateWeather();
-
+  matrix.setAnimationToDisplay(testAnimation);
+  matrix.writeStaticImgToDisplay(allOn);
+  // analogWrite(INS1_BLNK_PIN, 50); //need to fix board polairity
   setCpuFrequencyMhz(80); // slow down for power savings
   delay(1000);
 }
@@ -236,9 +232,10 @@ void loop()
       digitalWrite(SHUTDOWN_SUPPLY_PIN, LOW);
       displayOff = true;
       Serial.println("SLEEPING");
-
+      delay(1000);
       // Configure wakeup time to wake up at displayOnHour
       uint64_t wakeup_interval_us = ((((settings.displayOnHour - hour + 24) % 24) * 3600) - (minute * 60) - second) * 1000000; // Calculate the time until displayOnHour
+      Serial.println(wakeup_interval_us / 1000000);
       esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
       esp_sleep_enable_timer_wakeup(wakeup_interval_us);
 
@@ -295,7 +292,6 @@ void loop()
     updateWeather();
     displayVFDWeather(); // only callled when we update the weather. Otherwise, its static
     setMatrixWeatherDisplay();
-    displayMatrixWeather();
   }
   // VFD section
   if (millis() > userNotifyTimer + 1000) // allow time for VFD to notify user, then redisplay the weather
@@ -352,27 +348,27 @@ void loop()
   // matrix section
   if (digitalRead(DYN_STAT_SW_PIN) != currentMatrixDisplayMode)
   {
-    currentMatrixDisplayMode != currentMatrixDisplayMode;
-    displayMatrixWeather();
+    // Switch off = high = animate
+    currentMatrixDisplayMode = !currentMatrixDisplayMode;
+    Serial.println("Set1");
+    setMatrixWeatherDisplay();
   }
   if (digitalRead(NOW_TMRW_SW_PIN) != currentMatrixDisplayTime)
   {
-    currentMatrixDisplayTime != currentMatrixDisplayTime;
-    displayMatrixWeather();
+    // switch off = high = now
+    currentMatrixDisplayTime = !currentMatrixDisplayTime;
+    Serial.println("Set2");
+    setMatrixWeatherDisplay();
   }
 
-  // matrix.animateDisplay();
+  displayMatrixWeather();
   // printLocalTime();
   // Settings section
   if (readButton(ROTBTTN_PIN))
   {
     Serial.println("BUTTON");
     settingsMenu();
-    delay(1000);
   }
-}
-void newSettingsMenu(DeviceSettings &settings)
-{
 }
 void settingsMenu()
 {
@@ -381,7 +377,7 @@ void settingsMenu()
 
   while (1)
   {
-    Serial.println(settingsMode);
+
     delay(5);
     settingsMode = changeMode(settingsMode, 5);
     switch (settingsMode)
@@ -415,7 +411,7 @@ void settingsMenu()
     while (settingsMode = lastSettingsMode)
     {
       settingsMode = changeMode(settingsMode, 5);
-      Serial.println(settingsMode);
+
       ivtubes.scrollString();
       if (readButton(ROTBTTN_PIN))
       {
@@ -621,7 +617,7 @@ void setOnOffTime()
 }
 int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode on tube, easy for selecting
 {
-  Serial.println(mode);
+
   int lastmode = mode;
   mode = readRotEncoder(mode);
 
@@ -646,7 +642,7 @@ void updateDateTime()
   while (!getLocalTime(&timeinfo))
   {
     Serial.println("Failed to obtain time");
-    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 150);
+    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 100);
     ivtubes.scrollStringSync();
     // return;
   }
@@ -657,7 +653,7 @@ void updateDateTime()
   month = timeinfo.tm_mon + 1;
   day = timeinfo.tm_mday;
 
-  Serial.printf("%02d/%02d/%d %02d:%02d:%02d\n", month, day, year, hour, minute, second); // debug
+  // Serial.printf("%02d/%02d/%d %02d:%02d:%02d\n", month, day, year, hour, minute, second); // debug
 }
 void displayTime()
 {
@@ -686,7 +682,7 @@ void updateWeather() // for now, focus on openWeatherMap
 
     JsonObject filter_current = filter.createNestedObject("current");
     filter_current["temp"] = true;
-    filter_current["weather"][0]["id"] = true;
+    filter_current["weather"][0]["icon"] = true;
     filter["hourly"][0]["pop"] = true;
 
     JsonObject filter_daily_0 = filter["daily"].createNestedObject();
@@ -695,7 +691,7 @@ void updateWeather() // for now, focus on openWeatherMap
     JsonObject filter_daily_0_temp = filter_daily_0.createNestedObject("temp");
     filter_daily_0_temp["day"] = true;
     filter_daily_0_temp["night"] = true;
-    filter_daily_0["weather"][0]["id"] = true;
+    filter_daily_0["weather"][0]["icon"] = true;
 
     DynamicJsonDocument doc(3072);
 
@@ -709,21 +705,69 @@ void updateWeather() // for now, focus on openWeatherMap
     }
 
     // current
-    currentTemp = doc["current"]["temp"]; // 65.62
-    currentID = doc["current"]["weather"][0]["id"];
+    weather.currentTemp = doc["current"]["temp"]; // 65.62
+    const char *currIcon = doc["current"]["weather"][0]["icon"];
     // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
-    currentPOP = doc["daily"][0]["pop"];
+    weather.currentPOP = doc["daily"][0]["pop"];
     // might need to just get pop from the daily forcast. this looks like itll be wrong.
     //  tomorrow
-    tmrwDayTemp = doc["daily"][1]["temp"]["day"];
-    tmrwPOP = doc["daily"][1]["pop"];
-    tmrwID = doc["daily"][1]["weather"][0]["id"];
+    weather.tmrwDayTemp = doc["daily"][1]["temp"]["day"];
+    weather.tmrwPOP = doc["daily"][1]["pop"];
+    const char *tmrwIcon = doc["daily"][1]["weather"][0]["icon"];
+    // copy to struct
+    strcpy(weather.currentIcon, currIcon);
+    strcpy(weather.tmrwIcon, tmrwIcon);
   }
   else
   {
     Serial.println("WiFi Disconnected");
   }
 }
+const uint32_t *selectIcon(const char *iconStr)
+{
+  // parse icons
+  bool isDay = iconStr[2] == 'd' ? true : false;
+
+  if (strncmp(iconStr, "01", 2) == 0)
+  {
+    return isDay ? icon_01d : icon_01n;
+  }
+  else if (strncmp(iconStr, "02", 2) == 0)
+  {
+    return isDay ? icon_02d : icon_02n;
+  }
+  else if (strncmp(iconStr, "03", 2) == 0)
+  {
+    return isDay ? icon_03d : icon_03n;
+  }
+  else if (strncmp(iconStr, "04", 2) == 0)
+  {
+    return isDay ? icon_04d : icon_04n;
+  }
+  else if (strncmp(iconStr, "09", 2) == 0)
+  {
+    return isDay ? icon_09d : icon_09n;
+  }
+  else if (strncmp(iconStr, "10", 2) == 0)
+  {
+    return isDay ? icon_10d : icon_10n;
+  }
+  else if (strncmp(iconStr, "11", 2) == 0)
+  {
+    return isDay ? icon_11d : icon_11n;
+  }
+  else if (strncmp(iconStr, "13", 2) == 0)
+  {
+    return isDay ? icon_13d : icon_13n;
+  }
+  else if (strncmp(iconStr, "50", 2) == 0)
+  {
+    return isDay ? icon_50d : icon_50n;
+  }
+  return defaultIcon; // Default to a default icon if no match is found
+}
+
+/*
 void updateWeather_WeatherAPI()
 {
   if (WiFi.status() == WL_CONNECTED)
@@ -761,6 +805,7 @@ void updateWeather_WeatherAPI()
     Serial.println("WiFi Disconnected");
   }
 }
+*/
 void displayVFDWeather()
 {
   char *weatherVFD = (char *)malloc(7);
@@ -768,32 +813,51 @@ void displayVFDWeather()
 
   if (vfdCurrentDisplay)
   {
-    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(currentTemp), int(currentPOP * 100));
+    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(weather.currentTemp), int(weather.currentPOP * 100));
     digitalWrite(NOW_LED_PIN, HIGH);
     digitalWrite(TMRW_LED_PIN, LOW);
   }
   else
   {
-    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(tmrwDayTemp), int(tmrwPOP * 100));
+    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(weather.tmrwDayTemp), int(weather.tmrwPOP * 100));
     digitalWrite(NOW_LED_PIN, LOW);
     digitalWrite(TMRW_LED_PIN, HIGH);
   }
   ivtubes.shiftOutString(weatherVFD);
 
-  Serial.println(currentTemp);
-  Serial.println(currentPOP);
-  Serial.println(currentID);
-  Serial.println(tmrwDayTemp);
-  Serial.println(tmrwPOP);
-  Serial.println(tmrwID);
+  Serial.println(weather.currentTemp);
+  Serial.println(weather.currentPOP);
+  Serial.println(weather.currentIcon);
+  Serial.println(weather.tmrwDayTemp);
+  Serial.println(weather.tmrwPOP);
+  Serial.println(weather.tmrwIcon);
   Serial.println(weatherVFD);
   free(weatherVFD);
 }
 void setMatrixWeatherDisplay()
 {
+  const uint32_t *iconToDisplay = selectIcon(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
+  Serial.println(currentMatrixDisplayTime);
+  Serial.println(weather.tmrwIcon);
+  Serial.println(weather.currentIcon);
+  Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
+  if (currentMatrixDisplayMode)
+  {
+    Serial.println("animate");
+    matrix.setAnimationToDisplay(iconToDisplay);
+  }
+  else
+  {
+    Serial.println("static");
+    matrix.writeStaticImgToDisplay(const_cast<uint32_t *>((iconToDisplay + 1))); // just display the first frame of icon
+  }
 }
 void displayMatrixWeather()
 {
+  if (currentMatrixDisplayMode)
+  {
+    matrix.animateDisplay();
+  }
 }
 String httpGETRequest(const char *serverName)
 {
@@ -885,4 +949,22 @@ void writeEEPROMWithCRC(const DeviceSettings &settings) // Write EEPROM with CRC
 
   // Write CRC to EEPROM
   EEPROM.put(EEPROM_CRC_ADDRESS, calculatedCRC);
+}
+void initWiFi()
+{
+  Serial.printf("Connecting to %s ", ssid);
+  WiFi.begin(ssid, password);
+  ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 150); // connecting to wifi
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    digitalWrite(WIFI_LED_PIN, !(digitalRead(WIFI_LED_PIN)));
+    ivtubes.scrollString();
+    delay(75);
+    Serial.print(".");
+  }
+  digitalWrite(WIFI_LED_PIN, HIGH);
+  Serial.println(" CONNECTED");
+  WiFi.setSleep(true);                          // enable wifi sleep for power savings
+  ivtubes.setScrollingString("ПОДКЛЮЧЕН", 150); // connected
+  ivtubes.scrollStringSync();
 }
