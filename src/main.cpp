@@ -122,7 +122,7 @@ uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
 // Define a structure to hold your user-defined values
 struct DeviceSettings
 {
-  bool twentyFourHourMode;
+  bool twelveHourMode;
   uint8_t dateTimeDisplayRotateSpeed;
   uint8_t ClockTransitionMode;
   uint8_t displayOnHour;
@@ -176,7 +176,7 @@ void setup()
     settings.poisonTimeStart = 10;
     settings.dateTimeDisplayRotateSpeed = 15;
     settings.ClockTransitionMode = 1;
-    settings.twentyFourHourMode = 1;
+    settings.twelveHourMode = 1;
     writeEEPROMWithCRC(settings);
 
     EEPROM.commit();
@@ -372,7 +372,7 @@ void loop()
 }
 void settingsMenu()
 {
-
+  DeviceSettings oldSettings = settings;
   int settingsMode = 0;
 
   while (1)
@@ -392,7 +392,7 @@ void settingsMenu()
       break;
     case 2: // setHourDisplay
       ivtubes.setScrollingString("12/24 hour mode", 150);
-      Nixies.writeToNixie(255, 255, (settings.twentyFourHourMode ? 24 : 12), 0);
+      Nixies.writeToNixie(255, 255, (settings.twelveHourMode ? 12 : 24), 0);
       break;
     case 3: // set setTransitionMode
       ivtubes.setScrollingString("Nixie Transition Mode", 150);
@@ -408,7 +408,7 @@ void settingsMenu()
       break;
     }
     int lastSettingsMode = settingsMode;
-    while (settingsMode = lastSettingsMode)
+    while (settingsMode == lastSettingsMode)
     {
       settingsMode = changeMode(settingsMode, 5);
 
@@ -418,6 +418,20 @@ void settingsMenu()
         switch (settingsMode)
         {
         case 0:
+          if (settings.twelveHourMode == oldSettings.twelveHourMode &&
+              settings.dateTimeDisplayRotateSpeed == oldSettings.dateTimeDisplayRotateSpeed &&
+              settings.ClockTransitionMode == oldSettings.ClockTransitionMode &&
+              settings.displayOnHour == oldSettings.displayOnHour &&
+              settings.displayOffHour == oldSettings.displayOffHour &&
+              settings.poisonTimeSpan == oldSettings.poisonTimeSpan &&
+              settings.poisonTimeStart == oldSettings.poisonTimeStart)
+          {
+          }
+          else
+          {
+            EEPROM.commit();
+          }
+          displayVFDWeather();
           return;
         case 1:
           setRotationSpeed();
@@ -535,18 +549,19 @@ void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3
             break;
           }
         }
-      }
-      digits[digitMod] = readRotEncoder(digits[digitMod]);
-      if (digits[digitMod] != tempDigits[digitMod])
-      {
-        lastBlinkTime = millis();
-        if (digits[digitMod] > maxValues[digitMod])
+
+        digits[digitMod] = readRotEncoder(digits[digitMod]);
+        if (digits[digitMod] != tempDigits[digitMod])
         {
-          digits[digitMod] = minValues[digitMod];
-        }
-        else if (digits[digitMod] < minValues[digitMod])
-        {
-          digits[digitMod] = maxValues[digitMod];
+          lastBlinkTime = millis();
+          if (digits[digitMod] > maxValues[digitMod])
+          {
+            digits[digitMod] = minValues[digitMod];
+          }
+          else if (digits[digitMod] < minValues[digitMod])
+          {
+            digits[digitMod] = maxValues[digitMod];
+          }
         }
       }
     }
@@ -562,7 +577,7 @@ void setAntiPoisonMinute()
   ivtubes.setScrollingString("Anti Poison Timer", 150);
   uint8_t digits[3] = {settings.poisonTimeStart, 255, settings.poisonTimeSpan};
   uint8_t minValues[3] = {0, 0, 5};
-  uint8_t maxValues[3] = {59, 0, 45};
+  uint8_t maxValues[3] = {59, 0, 60};
   userInputClock(digits, minValues, maxValues, ALLOFF);
   settings.poisonTimeStart = digits[0];
   settings.poisonTimeSpan = digits[2];
@@ -591,11 +606,11 @@ void setRotationSpeed()
 void setHourDisplayMode()
 {
   ivtubes.setScrollingString("12/24 hour mode", 150);
-  uint8_t digits[3] = {255, 255, settings.twentyFourHourMode};
+  uint8_t digits[3] = {255, 255, settings.twelveHourMode};
   uint8_t minValues[3] = {0, 0, 0};
   uint8_t maxValues[3] = {0, 0, 1};
   userInputClock(digits, minValues, maxValues, ALLOFF);
-  settings.twentyFourHourMode = (boolean)digits[2];
+  settings.twelveHourMode = (boolean)digits[2];
   writeEEPROMWithCRC(settings);
 }
 void setOnOffTime()
@@ -659,11 +674,11 @@ void displayTime()
 {
   if (settings.ClockTransitionMode)
   {
-    Nixies.writeToNixieScroll((settings.twentyFourHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+    Nixies.writeToNixieScroll((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
   }
   else
   {
-    Nixies.writeToNixie((settings.twentyFourHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+    Nixies.writeToNixie((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
   }
 }
 void displayDate()
