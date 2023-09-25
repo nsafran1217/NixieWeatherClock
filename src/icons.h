@@ -36,8 +36,10 @@ const uint32_t defaultIcon[4] = {}; // Default icon (in case the code doesn't ma
 const uint32_t icon_01d[4] = {}; // clear sky
 const uint32_t icon_02d[4] = {}; // few clouds
 const uint32_t icon_03d[4] = {}; // scattered clouds
-const uint32_t icon_04d[4] = {}; // broken clouds
-const uint32_t icon_09d[4] = {}; // shower rain
+const uint32_t icon_04d[1 + 4] = {
+    0x000100fa,
+    0x3f862700, 0x000f2070, 0x00000000, 0x003e0a27}; // broken clouds
+const uint32_t icon_09d[4] = {};                     // shower rain
 const uint32_t icon_10d[1 + (5 * 4)] = {
     0x00040096,
     0x823c8107, 0x00020410, 0x04f84330, 0x01140124,
