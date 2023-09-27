@@ -220,7 +220,7 @@ void setup()
   // analogWrite(INS1_BLNK_PIN, 50); //need to fix board polairity
   setCpuFrequencyMhz(80); // slow down for power savings
   delay(1000);
-  //setMatrixWeatherDisplay();
+  setMatrixWeatherDisplay();
 }
 
 void loop()
@@ -703,7 +703,7 @@ void displayDate()
 {
   Nixies.writeToNixie(month, day, year - 2000, (second % 2 ? ALLOFF : 6));
 }
-void updateWeather() // used as a task
+void updateWeather()
 {
   // char *num = (char *)malloc(7);
   // snprintf(num, 7, "%06d", millis());

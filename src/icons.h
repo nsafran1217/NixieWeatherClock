@@ -30,16 +30,32 @@ const uint32_t testAnimation[1 + (22 * 4)] = {
     0x00000fc0, 0x00000000, 0x00000fc0, 0x00000000,
     0x0000003f, 0x00000000, 0x0000003f, 0x00000000};
 
-const uint32_t defaultIcon[4] = {}; // Default icon (in case the code doesn't match any icon)
+const uint32_t defaultIcon[4] = {
+    0x00010ffa,
+    0x03104103, 0x00000000, 0x00008230, 0x08008208}; // Default icon (in case the code doesn't match any icon)
 
 // day
-const uint32_t icon_01d[4] = {}; // clear sky
-const uint32_t icon_02d[4] = {}; // few clouds
-const uint32_t icon_03d[4] = {}; // scattered clouds
+const uint32_t icon_01d[1 + (3 * 4)] = {
+    0x000300fa,
+    0xc70c5200, 0x00081431, 0x38c28100, 0x0004a30e,
+    0xc70c5210, 0x04081431, 0x38c28102, 0x0084a30e,
+    0xc70c5200, 0x00081431, 0x38c28100, 0x0004a30e}; // clear sky
+const uint32_t icon_02d[1 + 4] = {
+    0x00010ffa,
+    0x32f3cffe, 0x00071134, 0x80000800, 0x003f0617}; // few clouds
+const uint32_t icon_03d[1 + 4] = {
+    0x00010ffa,
+    0x08107000, 0x0000fe04, 0x4e420000, 0x0000fc10}; // scattered clouds
 const uint32_t icon_04d[1 + 4] = {
-    0x000100fa,
+    0x00010ffa,
     0x3f862700, 0x000f2070, 0x00000000, 0x003e0a27}; // broken clouds
-const uint32_t icon_09d[4] = {};                     // shower rain
+const uint32_t icon_09d[1 + (5 * 4)] = {
+    0x00040096,
+    0x823c8107, 0x00020410, 0x04f84330, 0x01140124,
+    0x823c8107, 0x00020410, 0x04f84330, 0x05100901,
+    0x803c8107, 0x00810420, 0x10f84330, 0x04120141,
+    0x003c8107, 0x00410820, 0x12f84330, 0x05005044,
+    0x413c8107, 0x00420800, 0x82f84330, 0x05101104}; // shower rain
 const uint32_t icon_10d[1 + (5 * 4)] = {
     0x00040096,
     0x823c8107, 0x00020410, 0x04f84330, 0x01140124,
@@ -47,8 +63,12 @@ const uint32_t icon_10d[1 + (5 * 4)] = {
     0x803c8107, 0x00810420, 0x10f84330, 0x04120141,
     0x003c8107, 0x00410820, 0x12f84330, 0x05005044,
     0x413c8107, 0x00420800, 0x82f84330, 0x05101104}; // rain
-const uint32_t icon_11d[4] = {};                     // thunderstorm
-const uint32_t icon_13d[4] = {};                     // snow
+const uint32_t icon_11d[1 + 4] = {
+    0x00010ffa,
+    0x087d03c0, 0x02022021, 0x30f8293c, 0x040830c6}; // thunderstorm
+const uint32_t icon_13d[1 + 4] = {
+    0x00010ffa,
+    0x0021c200, 0x00000010, 0x0010e100, 0x00008308}; // snow
 const uint32_t icon_50d[1 + (8 * 4)] = {
     0x00070096,
     0x3f003007, 0x003f03f0, 0x3c03f030, 0x003c0300,
@@ -61,12 +81,16 @@ const uint32_t icon_50d[1 + (8 * 4)] = {
     0x3f003007, 0x003f03f0, 0x3c03f030, 0x003e0300}; // mist
 
 // night
-const uint32_t icon_01n[4] = {};     // clear sky
-const uint32_t *icon_02n = icon_02d; // few clouds
-const uint32_t *icon_03n = icon_03d; // scattered clouds
-const uint32_t *icon_04n = icon_04d; // broken clouds
-const uint32_t *icon_09n = icon_09d; // shower rain
-const uint32_t *icon_10n = icon_10d; // rain
+const uint32_t icon_01n[1 + 4] = {
+    0x00010ffa,
+    0x00080100, 0x08040100, 0x00100880, 0x00020100}; // clear sky
+const uint32_t icon_02n[1 + 4] = {
+    0x00010ffa,
+    0x03010100, 0x08001d41, 0x30100888, 0x0100f823}; // few clouds
+const uint32_t *icon_03n = icon_03d;                 // scattered clouds
+const uint32_t *icon_04n = icon_04d;                 // broken clouds
+const uint32_t *icon_09n = icon_09d;                 // shower rain
+const uint32_t *icon_10n = icon_10d;                 // rain
 // const uint32_t icon_10n[4] = {};     // rain
 const uint32_t *icon_11n = icon_11d; // thunderstorm
 const uint32_t *icon_13n = icon_13d; // snow
