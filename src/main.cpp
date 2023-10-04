@@ -102,7 +102,6 @@ uint8_t nextPoisonRunMinute = 0;      // next minute that antipoison will run
 boolean displayDateOrTime = 0;        // are we displaying the date or time
 boolean vfdCurrentDisplayTime = 0;    // displaying weather now, or tomorrow's forecast
 uint8_t weatherDisplayMode = 0;       // rotate, static now, static tomorrow
-boolean displayOff = false;           // are the power supplies turned off?
 boolean currentMatrixDisplayMode = 1; // dynamic or static. 1= dyn
 boolean currentMatrixDisplayTime = 1; // tmrw or now. 1 = now
 uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
@@ -208,36 +207,23 @@ void setup()
 
 void loop()
 {
-  if (digitalRead(ON_OFF_SW_PIN)) // HIGH, switch is off, in auto position
+  if (digitalRead(ON_OFF_SW_PIN) && isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour)) // HIGH, switch is off, in auto position
   {
-    if (isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour) && !displayOff) // turn off supply
-    {
-      digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, LOW);
-      displayOff = true;
-      Serial.println("SLEEPING");
-      delay(1000);
-      // Configure wakeup time to wake up at displayOnHour
-      uint64_t wakeup_interval_us = ((((settings.displayOnHour - hour + 24) % 24) * 3600) - (minute * 60) - second) * 1000000; // Calculate the time until displayOnHour
-      Serial.println(wakeup_interval_us / 1000000);
-      esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
-      esp_sleep_enable_timer_wakeup(wakeup_interval_us);
+    // turn off supply and go to sleep, until waken by interrupt or by timer
+    digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, LOW);
 
-      // Enter deep sleep mode
-      esp_deep_sleep_start();
-    }
-    else if (displayOff)
-    {
-      displayOff = false;
-      digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
-    }
-    if (displayOff)
-      delay(10000); // no need to run through the loop while display is turned off
+    Serial.println("SLEEPING");
+    delay(1000);
+    // Configure wakeup time to wake up at displayOnHour
+    uint64_t wakeup_interval_us = ((((settings.displayOnHour - hour + 24) % 24) * 3600) - (minute * 60) - second) * 1000000; // Calculate the time until displayOnHour
+    Serial.println(wakeup_interval_us / 1000000);
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
+    esp_sleep_enable_timer_wakeup(wakeup_interval_us);
+
+    // Enter deep sleep mode
+    esp_deep_sleep_start();
   }
-  else if (displayOff)
-  {
-    displayOff = false;
-    digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
-  }
+
   // NixieTube section
   timeDateDisplayMode = changeMode(timeDateDisplayMode, 2);
   updateDateTime();            // update the time vars
