@@ -43,7 +43,6 @@
 #define ROTBTTN_PIN 34
 #define SHUTDOWN_SUPPLY_PIN 4 // set HIGH to enable supplies. LOW to turn them off
 
-#define NOW_TMRW_SW_PIN 5
 #define DYN_STAT_SW_PIN 13
 #define ON_OFF_SW_PIN 27
 
@@ -68,16 +67,13 @@
 
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
-const char *apiKey = NEW_WEATHER_API;
 const char *openWeatherMapApiKey = WEATHER_API;
 const char *lat = WEATHER_LAT;
 const char *lon = WEATHER_LON;
-const char *zipCode = ZIP_CODE;
 const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -18000;
 const int daylightOffset_sec = 3600;
 String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minutely,alerts&units=imperial&lat=" + String(lat) + "&lon=" + String(lon) + "&appid=" + String(openWeatherMapApiKey);
-String forecastURL = "http://api.weatherapi.com/v1/forecast.json?key=" + String(apiKey) + "&q=" + String(zipCode) + "&days=2&aqi=no&alerts=no";
 
 // Setup Devices
 INS1Matrix matrix = INS1Matrix(INS1_DATA_PIN, INS1_CLK_PIN, INS1_LATCH_PIN, INS1_BLNK_PIN, true, INS1_DISPLAYS);
@@ -108,19 +104,19 @@ uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some
 uint8_t nextMinuteToUpdateWeather = 0;
 uint8_t lastWeatherCheckMin = 0; // Last Minute weather was checked
 uint8_t nextSecondToChangeDateTimeModes = 0;
-uint8_t nextSecondToChangeVFDMode = 0;
+uint8_t nextSecondToChangeWeatherTime = 0;
 unsigned long userNotifyTimer = 0;
 // Mode Vars
 uint8_t timeDateDisplayMode = 0;      // display time, date, or rotate between them
 uint8_t nextPoisonRunMinute = 0;      // next minute that antipoison will run
 boolean displayDateOrTime = 0;        // are we displaying the date or time
-boolean vfdCurrentDisplay = 0;        // displaying weather now, or tomorrow's forecast
-uint8_t vfdDisplayMode = 0;           // rotate, static now, static tomorrow
+boolean vfdCurrentDisplayTime = 0;    // displaying weather now, or tomorrow's forecast
+uint8_t weatherDisplayMode = 0;       // rotate, static now, static tomorrow
 boolean displayOff = false;           // are the power supplies turned off?
 boolean currentMatrixDisplayMode = 1; // dynamic or static. 1= dyn
 boolean currentMatrixDisplayTime = 1; // tmrw or now. 1 = now
 uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
-// Define a structure to hold your user-defined values
+// Struct for clock user settings
 struct DeviceSettings
 {
   bool twelveHourMode;
@@ -180,7 +176,6 @@ void setup()
     settings.ClockTransitionMode = 1;
     settings.twelveHourMode = 1;
     writeEEPROMWithCRC(settings);
-
     EEPROM.commit();
   }
   else
@@ -193,7 +188,6 @@ void setup()
   pinMode(ROTDT_PIN, INPUT);
   pinMode(ROTBTTN_PIN, INPUT);
 
-  pinMode(NOW_TMRW_SW_PIN, INPUT_PULLUP);
   pinMode(DYN_STAT_SW_PIN, INPUT_PULLUP);
   pinMode(ON_OFF_SW_PIN, INPUT_PULLUP);
 
@@ -304,13 +298,14 @@ void loop()
     Serial.println(userNotifyTimer);
     displayVFDWeather();
   }
-  if (vfdDisplayMode == 2) // if in rotate mode, do the rotation. otherwise we update it when we refresh the forecast
+  if (weatherDisplayMode == 2) // if in rotate mode, do the rotation. otherwise we update it when we refresh the forecast
   {
-    if (second == nextSecondToChangeVFDMode)
+    if (second == nextSecondToChangeWeatherTime)
     {
-      nextSecondToChangeVFDMode = (nextSecondToChangeVFDMode + 15) % 60;
-      vfdCurrentDisplay = !vfdCurrentDisplay;
-      if (vfdCurrentDisplay)
+      nextSecondToChangeWeatherTime = (nextSecondToChangeWeatherTime + 15) % 60;
+      vfdCurrentDisplayTime = !vfdCurrentDisplayTime;
+      currentMatrixDisplayTime = !currentMatrixDisplayTime;
+      if (vfdCurrentDisplayTime)
       {
         digitalWrite(NOW_LED_PIN, HIGH);
         digitalWrite(TMRW_LED_PIN, LOW);
@@ -321,26 +316,31 @@ void loop()
         digitalWrite(TMRW_LED_PIN, HIGH);
       }
       displayVFDWeather();
+      setMatrixWeatherDisplay();
     }
   }
   if (readButton(VFD_MODE_BTN_PIN)) // change VFD display mode
   {
     Serial.println("REGIME");
-    vfdDisplayMode = (vfdDisplayMode + 1) % 3;
-    switch (vfdDisplayMode)
+    weatherDisplayMode = (weatherDisplayMode + 1) % 3;
+    switch (weatherDisplayMode)
     {
     case 0:
       ivtubes.shiftOutString("Today");
       digitalWrite(NOW_LED_PIN, HIGH);
       digitalWrite(TMRW_LED_PIN, LOW);
+      vfdCurrentDisplayTime = true;
+      currentMatrixDisplayTime = true;
       break;
     case 1:
       ivtubes.shiftOutString("tmrw");
       digitalWrite(NOW_LED_PIN, LOW);
       digitalWrite(TMRW_LED_PIN, HIGH);
+      vfdCurrentDisplayTime = false;
+      currentMatrixDisplayTime = false;
       break;
     case 2:
-      nextSecondToChangeVFDMode = 0;
+      nextSecondToChangeWeatherTime = 0;
       ivtubes.shiftOutString("DYN");
     }
     userNotifyTimer = millis();
@@ -354,13 +354,6 @@ void loop()
     Serial.println("Set1");
     setMatrixWeatherDisplay();
   }
-  if (digitalRead(NOW_TMRW_SW_PIN) != currentMatrixDisplayTime)
-  {
-    // switch off = high = now
-    currentMatrixDisplayTime = !currentMatrixDisplayTime;
-    Serial.println("Set2");
-    setMatrixWeatherDisplay();
-  }
 
   displayMatrixWeather();
   // printLocalTime();
@@ -371,6 +364,7 @@ void loop()
     settingsMenu();
   }
 }
+//user input via encoder to change clock settings
 void settingsMenu()
 {
   DeviceSettings oldSettings = settings;
@@ -503,7 +497,8 @@ boolean readButton(uint8_t pin) // true if button pressed
     return false;
   }
 }
-void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3], uint8_t colons) // digits[3] = hour, minute, second
+// use for general input on the clock display. see settings methods for example of usage
+void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3], uint8_t colons) // digits[3] = hour, minute, second. //same for other arrays
 {
   uint8_t tempDigits[3]; // hour, mins, secs
   memcpy(tempDigits, digits, sizeof(uint8_t) * 3);
@@ -627,8 +622,8 @@ void setOnOffTime()
     ivtubes.scrollStringSync();
     return;
   }
-  EEPROM.write(OFF_HOUR_ADDRESS, digits[2]); // commit change to EEPROM
-  EEPROM.write(ON_HOUR_ADDRESS, digits[0]);  // commit change to EEPROM
+  settings.displayOffHour = digits[2];
+  settings.displayOnHour = digits[0];
   writeEEPROMWithCRC(settings);
 }
 int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode on tube, easy for selecting
@@ -655,7 +650,7 @@ int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode
 void updateDateTime()
 {
   struct tm timeinfo;
-  while (!getLocalTime(&timeinfo))
+  while (!getLocalTime(&timeinfo)) // todo, add a timeout to reset the program
   {
     Serial.println("Failed to obtain time");
     ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 100);
@@ -675,9 +670,8 @@ void displayTime()
 {
   if (settings.ClockTransitionMode)
   {
-    if (lastsecond != second)
+    if (lastsecond != second) // only call if time has changed
     {
-
       lastsecond = second;
       xTaskCreate(
           scrollNixieTimeTask,                 // Function that should be called
@@ -797,51 +791,12 @@ const uint32_t *selectIcon(const char *iconStr)
   return defaultIcon; // Default to a default icon if no match is found
 }
 
-/*
-void updateWeather_WeatherAPI()
-{
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    DynamicJsonDocument doc(8192);
-
-    String forecast = httpGETRequest(forecastURL.c_str()); // for some reason I cant just directly put this into the deserialize.
-    // Serial.println(forecast);
-    DeserializationError error = deserializeJson(doc, forecast);
-    if (error)
-    {
-      Serial.print("deserializeJson() failed: ");
-      Serial.println(error.c_str());
-      return;
-    }
-
-    // current
-    currentTemp = doc["current"]["temp_f"];
-    currentCode = doc["current"]["condition"]["code"];
-    if (minute < 15)
-    {
-      currentPOP = doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_rain"] > doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_snow"] ? doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_rain"] : doc["forecast"]["forecastday"][0]["hour"][0]["chance_of_snow"]; // pick snow or rain to display based on whichever is better
-    }
-    else
-    {
-      currentPOP = doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_rain"] > doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_snow"] ? doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_rain"] : doc["forecast"]["forecastday"][0]["hour"][1]["chance_of_snow"]; // pick snow or rain to display based on whichever is better
-    }
-    // tomorrow
-    tmrwDayTemp = doc["forecast"]["forecastday"][1]["day"]["maxtemp_f"];
-    tomorrowCode = doc["forecast"]["forecastday"][1]["day"]["condition"]["code"];
-    tmrwPOP = doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_rain"] > doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_snow"] ? doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_rain"] : doc["forecast"]["forecastday"][1]["day"]["daily_chance_of_snow"]; // pick snow or rain to display based on whichever is better
-  }
-  else
-  {
-    Serial.println("WiFi Disconnected");
-  }
-}
-*/
 void displayVFDWeather()
 {
   char *weatherVFD = (char *)malloc(7);
   // todo, maybe round
 
-  if (vfdCurrentDisplay)
+  if (vfdCurrentDisplayTime)
   {
     snprintf(weatherVFD, 7, "%02d\037%02d%%", int(weather.currentTemp), int(weather.currentPOP * 100));
     digitalWrite(NOW_LED_PIN, HIGH);
@@ -884,7 +839,7 @@ void setMatrixWeatherDisplay()
 }
 void displayMatrixWeather()
 {
-  if (currentMatrixDisplayMode)
+  if (currentMatrixDisplayMode) // if true, animate the display
   {
     matrix.animateDisplay();
   }
