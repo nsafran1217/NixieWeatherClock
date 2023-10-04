@@ -30,7 +30,7 @@ const uint32_t testAnimation[1 + (22 * 4)] = {
     0x00000fc0, 0x00000000, 0x00000fc0, 0x00000000,
     0x0000003f, 0x00000000, 0x0000003f, 0x00000000};
 
-const uint32_t defaultIcon[4] = {
+const uint32_t defaultIcon[1 + 4] = {
     0x00010ffa,
     0x03104103, 0x00000000, 0x00008230, 0x08008208}; // Default icon (in case the code doesn't match any icon)
 
