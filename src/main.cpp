@@ -22,7 +22,7 @@
 #define OFF_HOUR_ADDRESS (ON_HOUR_ADDRESS + sizeof(uint8_t))
 #define POISON_TIME_SPAN_ADDRESS (OFF_HOUR_ADDRESS + sizeof(uint8_t))
 #define POISON_TIME_START_ADDRESS (POISON_TIME_SPAN_ADDRESS + sizeof(uint8_t))
-
+// pin definitions
 #define INS1_LATCH_PIN 16 // u2_rxd
 #define INS1_DATA_PIN 18
 #define INS1_CLK_PIN 17 // u2_txd
@@ -41,7 +41,8 @@
 #define ROTCLK_PIN 36 // VP
 #define ROTDT_PIN 39  // VN
 #define ROTBTTN_PIN 34
-#define SHUTDOWN_SUPPLY_PIN 4 // set HIGH to enable supplies. LOW to turn them off
+
+#define SHUTDOWN_PWR_SUPPLY_PIN 4 // set HIGH to enable power supplies. LOW to turn them off
 
 #define DYN_STAT_SW_PIN 13
 #define ON_OFF_SW_PIN 27
@@ -51,19 +52,8 @@
 #define TMRW_LED_PIN 14
 #define WIFI_LED_PIN 2
 
-#define INS1_DISPLAYS 2
-#define IV17_DISPLAYS 6
-/*FREE:
-15 -PWM at boot, Strapping |
-//taken
-2 -LED OUTPUT only
-35 INPUT ONLY - REGIME
-14 -PWM at boot | LED OUTPUT
-12 - boot fails if pulled high, strapping pin
-27
-13
-5 -PWM at boot, Strapping | Maybe an input for button
-*/
+#define INS1_DISPLAYS 2 // number of INS1 6x10 matrices
+#define IV17_DISPLAYS 6 // number of iv17 tubes
 
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
@@ -131,7 +121,6 @@ DeviceSettings settings;
 
 // FUNCTIONS
 void settingsMenu();
-void newSettingsMenu(DeviceSettings &settings);
 int readRotEncoder(int counter);
 boolean readButton(uint8_t pin);
 void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3], uint8_t colons);
@@ -183,7 +172,7 @@ void setup()
     Serial.println("CRC GOOD");
   }
 
-  pinMode(SHUTDOWN_SUPPLY_PIN, OUTPUT);
+  pinMode(SHUTDOWN_PWR_SUPPLY_PIN, OUTPUT);
   pinMode(ROTCLK_PIN, INPUT);
   pinMode(ROTDT_PIN, INPUT);
   pinMode(ROTBTTN_PIN, INPUT);
@@ -196,7 +185,7 @@ void setup()
   pinMode(TMRW_LED_PIN, OUTPUT);
   pinMode(WIFI_LED_PIN, OUTPUT);
 
-  digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH); // turn on power
+  digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH); // turn on power
   currentStateCLK = digitalRead(ROTCLK_PIN);
   lastStateCLK = currentStateCLK;
 
@@ -223,7 +212,7 @@ void loop()
   {
     if (isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour) && !displayOff) // turn off supply
     {
-      digitalWrite(SHUTDOWN_SUPPLY_PIN, LOW);
+      digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, LOW);
       displayOff = true;
       Serial.println("SLEEPING");
       delay(1000);
@@ -239,7 +228,7 @@ void loop()
     else if (displayOff)
     {
       displayOff = false;
-      digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH);
+      digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
     }
     if (displayOff)
       delay(10000); // no need to run through the loop while display is turned off
@@ -247,7 +236,7 @@ void loop()
   else if (displayOff)
   {
     displayOff = false;
-    digitalWrite(SHUTDOWN_SUPPLY_PIN, HIGH);
+    digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
   }
   // NixieTube section
   timeDateDisplayMode = changeMode(timeDateDisplayMode, 2);
@@ -364,7 +353,7 @@ void loop()
     settingsMenu();
   }
 }
-//user input via encoder to change clock settings
+// user input via encoder to change clock settings
 void settingsMenu()
 {
   DeviceSettings oldSettings = settings;
