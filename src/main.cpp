@@ -162,8 +162,8 @@ void setup()
     settings.dateTimeDisplayRotateSpeed = 15;
     settings.ClockTransitionMode = 1;
     settings.twelveHourMode = 1;
-    settings.matrixBrightness = 255;
-    settings.vfdBrightness = 255;
+    settings.matrixBrightness = 0;
+    settings.vfdBrightness = 0;
     writeEEPROMWithCRC(settings);
     EEPROM.commit();
   }
@@ -185,9 +185,7 @@ void setup()
   pinMode(TMRW_LED_PIN, OUTPUT);
   pinMode(WIFI_LED_PIN, OUTPUT);
 
-  //set display brightness
-  analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
-  analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
+
 
   digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH); // turn on power
   //setup rotary encoder
@@ -207,6 +205,9 @@ void setup()
   updateWeather();
   setCpuFrequencyMhz(80); // slow down for power savings
   delay(1000);
+  //set display brightness
+  //analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
+  analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
   setMatrixWeatherDisplay();
 }
 
@@ -415,7 +416,7 @@ void settingsMenu()
             EEPROM.commit();
           }
           // cleanup and get back to normal operation
-          analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
+          //analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
           analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
           displayVFDWeather();
           return;
