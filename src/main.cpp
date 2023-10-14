@@ -162,8 +162,8 @@ void setup()
     settings.dateTimeDisplayRotateSpeed = 15;
     settings.ClockTransitionMode = 1;
     settings.twelveHourMode = 1;
-    settings.matrixBrightness = 0;
-    settings.vfdBrightness = 0;
+    settings.matrixBrightness = 255;
+    settings.vfdBrightness = 255;
     writeEEPROMWithCRC(settings);
     EEPROM.commit();
   }
@@ -185,11 +185,18 @@ void setup()
   pinMode(TMRW_LED_PIN, OUTPUT);
   pinMode(WIFI_LED_PIN, OUTPUT);
 
+  //set display brightness
+  analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
+  analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
+
   digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH); // turn on power
+  //setup rotary encoder
   currentStateCLK = digitalRead(ROTCLK_PIN);
   lastStateCLK = currentStateCLK;
 
   nextPoisonRunMinute = settings.poisonTimeStart + settings.poisonTimeSpan;
+  //blank display while booting
+  matrix.writeStaticImgToDisplay(matrixAllOff);
   Nixies.writeToNixie(255, 255, 255, 0);
   // connect to WiFi
   initWiFi();
@@ -198,9 +205,6 @@ void setup()
   updateDateTime();
   nextMinuteToUpdateWeather = ((minute / 10) * 10) + 10;
   updateWeather();
-  matrix.setAnimationToDisplay(testAnimation);
-  matrix.writeStaticImgToDisplay(allOn);
-  // analogWrite(INS1_BLNK_PIN, 50); //need to fix board polairity
   setCpuFrequencyMhz(80); // slow down for power savings
   delay(1000);
   setMatrixWeatherDisplay();
@@ -208,6 +212,7 @@ void setup()
 
 void loop()
 {
+  //turn off time
   if (digitalRead(ON_OFF_SW_PIN) && isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour)) // HIGH, switch is off, in auto position
   {
     // turn off supply and go to sleep, until waken by interrupt or by timer
@@ -298,7 +303,7 @@ void loop()
   if (readButton(WEATHER_MODE_BTN_PIN)) // change VFD display mode
   {
     Serial.println("REGIME");
-    weatherDisplayMode = (weatherDisplayMode + 1) % 3;
+    weatherDisplayMode = (weatherDisplayMode + 1) % 3; //3 modes, loop back to 0
     switch (weatherDisplayMode)
     {
     case 0:
@@ -327,16 +332,13 @@ void loop()
   {
     // Switch off = high = animate
     currentMatrixDisplayMode = !currentMatrixDisplayMode;
-    Serial.println("Set1");
     setMatrixWeatherDisplay();
   }
+  displayMatrixWeather(); //display weather, animate if needed
 
-  displayMatrixWeather();
-  // printLocalTime();
   // Settings section
   if (readButton(ROTBTTN_PIN))
   {
-    Serial.println("BUTTON");
     settingsMenu();
   }
 }
@@ -345,11 +347,12 @@ void settingsMenu()
 {
   DeviceSettings oldSettings = settings;
   int settingsMode = 0;
+  const int numOfSettings = 7; // number of settings needs manually set here
 
   while (1)
   {
     delay(5);
-    settingsMode = changeMode(settingsMode, 7); //number of settings needs manually set here
+    settingsMode = changeMode(settingsMode, numOfSettings);
     switch (settingsMode)
     {
     case 0: // exit, just have number
@@ -388,7 +391,7 @@ void settingsMenu()
     int lastSettingsMode = settingsMode;
     while (settingsMode == lastSettingsMode)
     {
-      settingsMode = changeMode(settingsMode, 5);
+      settingsMode = changeMode(settingsMode, numOfSettings);
 
       ivtubes.scrollString();
       if (readButton(ROTBTTN_PIN))
@@ -411,6 +414,9 @@ void settingsMenu()
           {
             EEPROM.commit();
           }
+          // cleanup and get back to normal operation
+          analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
+          analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
           displayVFDWeather();
           return;
         case 1:
@@ -834,12 +840,10 @@ void setMatrixWeatherDisplay()
   Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
   if (currentMatrixDisplayMode)
   {
-    Serial.println("animate");
     matrix.setAnimationToDisplay(iconToDisplay);
   }
   else
   {
-    Serial.println("static");
     matrix.writeStaticImgToDisplay(const_cast<uint32_t *>((iconToDisplay + 1))); // just display the first frame of icon
   }
 }

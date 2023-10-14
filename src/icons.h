@@ -2,8 +2,8 @@
 
 // test
 const uint32_t testStatic[4] = {0x0001c700, 0x000f4104, 0x8000e380, 0x003c0820};
-uint32_t allOn[4] = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
-uint32_t allOff[4] = {0, 0, 0, 0};
+uint32_t matrixAllOn[4] = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
+uint32_t matrixAllOff[4] = {0, 0, 0, 0};
 
 const uint32_t testAnimation[1 + (22 * 4)] = {
     0x001600F4, // 22 frames, 500 ms delay
