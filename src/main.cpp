@@ -621,22 +621,22 @@ void setOnOffTime()
 }
 void setMatrixBrightness()
 {
-  uint8_t digits[3] = {255, 255, settings.matrixBrightness / 10};
-  uint8_t minValues[3] = {0, 0, 10};
-  uint8_t maxValues[3] = {0, 0, 25};
+  uint8_t digits[3] = {255, 255, settings.matrixBrightness / 25};
+  uint8_t minValues[3] = {0, 0, 0};
+  uint8_t maxValues[3] = {0, 0, 10};
   userInputClock(digits, minValues, maxValues, ALLOFF);
 
-  settings.matrixBrightness = digits[2] == 25 ? 255 : digits[2] * 10;
+  settings.matrixBrightness = digits[2] == 10 ? 255 : 255 - digits[2] * 25;
   writeEEPROMWithCRC(settings);
 }
 void setVFDBrightness()
 {
-  uint8_t digits[3] = {255, 255, settings.vfdBrightness / 10};
-  uint8_t minValues[3] = {0, 0, 10};
-  uint8_t maxValues[3] = {0, 0, 25};
+  uint8_t digits[3] = {255, 255, settings.vfdBrightness / 25};
+  uint8_t minValues[3] = {0, 0, 0};
+  uint8_t maxValues[3] = {0, 0, 10};
   userInputClock(digits, minValues, maxValues, ALLOFF);
 
-  settings.vfdBrightness = digits[2] == 25 ? 255 : digits[2] * 10;
+  settings.vfdBrightness = digits[2] == 10 ? 255 : 255 - digits[2] * 25;
   writeEEPROMWithCRC(settings);
 }
 int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode on tube, easy for selecting
