@@ -5,6 +5,7 @@
 #include <EEPROM.h>
 #include <WiFi.h>
 #include <time.h>
+#include <ESP32Ping.h>
 
 #include <INS1Matrix.h>
 #include <IV17.h>
@@ -43,13 +44,14 @@
 #define ON_OFF_SW_PIN 27
 
 #define WEATHER_MODE_BTN_PIN 35 // value may change
-#define NOW_LED_PIN 12
-#define TMRW_LED_PIN 14
+#define NOW_LED_PIN 14
+#define TMRW_LED_PIN 12
 #define WIFI_LED_PIN 2
 
 #define INS1_DISPLAYS 2 // number of INS1 6x10 matrices
 #define IV17_DISPLAYS 6 // number of iv17 tubes
 
+const char *PhoneIPAddress = "10.35.0.98"; // used to detect if i am home
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
 const char *openWeatherMapApiKey = WEATHER_API;
@@ -117,6 +119,7 @@ DeviceSettings settings;
 
 // FUNCTIONS
 void settingsMenu();
+
 int readRotEncoder(int counter);
 boolean readButton(uint8_t pin);
 void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3], uint8_t colons);
@@ -185,15 +188,13 @@ void setup()
   pinMode(TMRW_LED_PIN, OUTPUT);
   pinMode(WIFI_LED_PIN, OUTPUT);
 
-
-
   digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH); // turn on power
-  //setup rotary encoder
+  // setup rotary encoder
   currentStateCLK = digitalRead(ROTCLK_PIN);
   lastStateCLK = currentStateCLK;
 
   nextPoisonRunMinute = settings.poisonTimeStart + settings.poisonTimeSpan;
-  //blank display while booting
+  // blank display while booting
   matrix.writeStaticImgToDisplay(matrixAllOff);
   Nixies.writeToNixie(255, 255, 255, 0);
   // connect to WiFi
@@ -205,15 +206,15 @@ void setup()
   updateWeather();
   setCpuFrequencyMhz(80); // slow down for power savings
   delay(1000);
-  //set display brightness
-  //analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
+  // set display brightness
+  // analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
   analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
   setMatrixWeatherDisplay();
 }
 
 void loop()
 {
-  //turn off time
+  // turn off time
   if (digitalRead(ON_OFF_SW_PIN) && isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour)) // HIGH, switch is off, in auto position
   {
     // turn off supply and go to sleep, until waken by interrupt or by timer
@@ -224,13 +225,25 @@ void loop()
     // Configure wakeup time to wake up at displayOnHour
     uint64_t wakeup_interval_us = ((((settings.displayOnHour - hour + 24) % 24) * 3600) - (minute * 60) - second) * 1000000; // Calculate the time until displayOnHour
     Serial.println(wakeup_interval_us / 1000000);
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW); // this ping has the auto/off switch on it
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW); // this pin has the auto/off switch on it
     esp_sleep_enable_timer_wakeup(wakeup_interval_us);
 
     // Enter deep sleep mode
     esp_deep_sleep_start();
   }
-
+  // Tunn off supplies while im not home
+  /*
+  if (isBetweenHours(hour, 9, 16)) //only do this between 9 and 4
+  {
+    if (digitalRead(SHUTDOWN_PWR_SUPPLY_PIN)) // if supply is on
+    {
+      if (Ping.ping(PhoneIPAddress, 2))
+      {
+        digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
+      }
+    }
+  }
+  */
   // NixieTube section
   timeDateDisplayMode = changeMode(timeDateDisplayMode, 2); // rotary encoder to change time mode while in main loop
   updateDateTime();                                         // update the time vars
@@ -273,10 +286,7 @@ void loop()
   // VFD section
   if (millis() > userNotifyTimer + 1000) // allow time for VFD to notify user, then redisplay the weather
   {
-    Serial.println("usernotif");
-    Serial.println(userNotifyTimer);
-    Serial.println(millis());
-    userNotifyTimer = UINT32_MAX - 1001; // set to max value
+      userNotifyTimer = UINT32_MAX - 1001; // set to max value
     Serial.println(userNotifyTimer);
     displayVFDWeather();
   }
@@ -303,19 +313,18 @@ void loop()
   }
   if (readButton(WEATHER_MODE_BTN_PIN)) // change VFD display mode
   {
-    Serial.println("REGIME");
-    weatherDisplayMode = (weatherDisplayMode + 1) % 3; //3 modes, loop back to 0
+    weatherDisplayMode = (weatherDisplayMode + 1) % 3; // 3 modes, loop back to 0
     switch (weatherDisplayMode)
     {
     case 0:
-      ivtubes.shiftOutString("Today");
+      ivtubes.shiftOutString("СЕЙЧАС");
       digitalWrite(NOW_LED_PIN, HIGH);
       digitalWrite(TMRW_LED_PIN, LOW);
       vfdCurrentDisplayTime = true;
       currentMatrixDisplayTime = true;
       break;
     case 1:
-      ivtubes.shiftOutString("tmrw");
+      ivtubes.shiftOutString("ЗАВТРА");
       digitalWrite(NOW_LED_PIN, LOW);
       digitalWrite(TMRW_LED_PIN, HIGH);
       vfdCurrentDisplayTime = false;
@@ -323,7 +332,7 @@ void loop()
       break;
     case 2:
       nextSecondToChangeWeatherTime = 0;
-      ivtubes.shiftOutString("DYN");
+      ivtubes.shiftOutString("ДИН  ");
     }
     userNotifyTimer = millis();
   }
@@ -335,7 +344,7 @@ void loop()
     currentMatrixDisplayMode = !currentMatrixDisplayMode;
     setMatrixWeatherDisplay();
   }
-  displayMatrixWeather(); //display weather, animate if needed
+  displayMatrixWeather(); // display weather, animate if needed
 
   // Settings section
   if (readButton(ROTBTTN_PIN))
@@ -348,7 +357,7 @@ void settingsMenu()
 {
   DeviceSettings oldSettings = settings;
   int settingsMode = 0;
-  const int numOfSettings = 7; // number of settings needs manually set here
+  const int numOfSettings = 6; // number of settings needs manually set here
 
   while (1)
   {
@@ -380,11 +389,11 @@ void settingsMenu()
       ivtubes.setScrollingString("Anti Poison Timer", 150);
       Nixies.writeToNixie(settings.poisonTimeStart, 255, settings.poisonTimeSpan, 8);
       break;
+    // case 6:
+    // ivtubes.setScrollingString("Matrix Brightness", 150);
+    // Nixies.writeToNixie(255, 255, settings.matrixBrightness, 8);
+    // break;
     case 6:
-      ivtubes.setScrollingString("Matrix Brightness", 150);
-      Nixies.writeToNixie(255, 255, settings.matrixBrightness, 8);
-      break;
-    case 7:
       ivtubes.setScrollingString("VFD Brightness", 150);
       Nixies.writeToNixie(255, 255, settings.vfdBrightness, 8);
       break;
@@ -416,7 +425,7 @@ void settingsMenu()
             EEPROM.commit();
           }
           // cleanup and get back to normal operation
-          //analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
+          // analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
           analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
           displayVFDWeather();
           return;
@@ -435,10 +444,10 @@ void settingsMenu()
         case 5:
           setAntiPoisonMinute();
           break;
+        // case 6:
+        // setMatrixBrightness();
+        // break;
         case 6:
-          setMatrixBrightness();
-          break;
-        case 7:
           setVFDBrightness();
           break;
         }
