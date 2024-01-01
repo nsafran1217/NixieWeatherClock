@@ -40,8 +40,8 @@
 
 #define SHUTDOWN_PWR_SUPPLY_PIN 4 // set HIGH to enable power supplies. LOW to turn them off
 
-#define DYN_STAT_SW_PIN 13
-#define ON_OFF_SW_PIN 27
+#define DYN_STAT_SW_PIN 27//13
+#define ON_OFF_SW_PIN 5//27
 
 #define WEATHER_MODE_BTN_PIN 35 // value may change
 #define NOW_LED_PIN 14
@@ -287,7 +287,7 @@ void loop()
   if (millis() > userNotifyTimer + 1000) // allow time for VFD to notify user, then redisplay the weather
   {
       userNotifyTimer = UINT32_MAX - 1001; // set to max value
-    Serial.println(userNotifyTimer);
+    //Serial.println(userNotifyTimer);
     displayVFDWeather();
   }
   if (weatherDisplayMode == 2) // if in rotate mode, do the rotation. otherwise we update it when we refresh the forecast
@@ -332,7 +332,7 @@ void loop()
       break;
     case 2:
       nextSecondToChangeWeatherTime = 0;
-      ivtubes.shiftOutString("ДИН  ");
+      ivtubes.shiftOutString("ДИН   ");
     }
     userNotifyTimer = millis();
   }
@@ -832,12 +832,12 @@ void displayVFDWeather()
   }
   ivtubes.shiftOutString(weatherVFD);
 
-  Serial.println(weather.currentTemp);
-  Serial.println(weather.currentPOP);
-  Serial.println(weather.currentIcon);
-  Serial.println(weather.tmrwDayTemp);
-  Serial.println(weather.tmrwPOP);
-  Serial.println(weather.tmrwIcon);
+  //Serial.println(weather.currentTemp);
+  //Serial.println(weather.currentPOP);
+  //Serial.println(weather.currentIcon);
+  //Serial.println(weather.tmrwDayTemp);
+  //Serial.println(weather.tmrwPOP);
+  //Serial.println(weather.tmrwIcon);
   Serial.println(weatherVFD);
   free(weatherVFD);
 }
@@ -845,11 +845,13 @@ void setMatrixWeatherDisplay()
 {
   const uint32_t *iconToDisplay = selectIcon(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
   Serial.println(currentMatrixDisplayTime);
-  Serial.println(weather.tmrwIcon);
-  Serial.println(weather.currentIcon);
+  //Serial.println(weather.tmrwIcon);
+  //Serial.println(weather.currentIcon);
   Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
+  Serial.println(currentMatrixDisplayMode);
   if (currentMatrixDisplayMode)
   {
+    
     matrix.setAnimationToDisplay(iconToDisplay);
   }
   else
@@ -969,7 +971,7 @@ void initWiFi()
   }
   digitalWrite(WIFI_LED_PIN, HIGH);
   Serial.println(" CONNECTED");
-  WiFi.setSleep(true);                          // enable wifi sleep for power savings
-  ivtubes.setScrollingString("ПОДКЛЮЧЕН", 150); // connected
+  //WiFi.setSleep(true);                          // enable wifi sleep for power savings
+  ivtubes.setScrollingString("ПОДКЛЮЧЕН ", 150); // connected
   ivtubes.scrollStringSync();
 }
