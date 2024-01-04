@@ -706,7 +706,7 @@ void displayTime()
           "Scroll transition mode for Nixies", // Name of the task (for debugging)
           1000,                                // Stack size (bytes)
           NULL,                                // Parameter to pass
-          1,                                   // Task priority
+          3,                                   // Task priority
           NULL                                 // Task handle
       );
     }
@@ -757,7 +757,7 @@ void updateWeather()
   if (error)
   {
     Serial.print("deserializeJson() failed: ");
-    Serial.println(error.c_str());
+    //Serial.println(error.c_str());
     return;
   }
 
@@ -880,7 +880,7 @@ String httpGETRequest(const char *serverName)
   // Send HTTP POST request
   int httpResponseCode = http.GET();
 
-  String payload = "{}";
+  String payload = "";
 
   if (httpResponseCode > 0)
   {
