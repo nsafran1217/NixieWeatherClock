@@ -14,7 +14,6 @@
 #include <icons.h>
 
 // EEPROM ADDRESSES
-// EEPROM ADDRESSES
 #define EEPROM_CRC_ADDRESS 0
 #define SETTINGS_ADDRESS 4
 
@@ -40,8 +39,8 @@
 
 #define SHUTDOWN_PWR_SUPPLY_PIN 4 // set HIGH to enable power supplies. LOW to turn them off
 
-#define DYN_STAT_SW_PIN 27//13
-#define ON_OFF_SW_PIN 5//27
+#define DYN_STAT_SW_PIN 5//13
+#define ON_OFF_SW_PIN 27
 
 #define WEATHER_MODE_BTN_PIN 35 // value may change
 #define NOW_LED_PIN 14
@@ -50,6 +49,9 @@
 
 #define INS1_DISPLAYS 2 // number of INS1 6x10 matrices
 #define IV17_DISPLAYS 6 // number of iv17 tubes
+
+#define WEATHERNOW true
+#define WEATHERTMRW false
 
 const char *PhoneIPAddress = "10.35.0.98"; // used to detect if i am home
 const char *ssid = WIFI_SSID;
@@ -97,10 +99,10 @@ unsigned long userNotifyTimer = 0;
 uint8_t timeDateDisplayMode = 0;      // display time, date, or rotate between them
 uint8_t nextPoisonRunMinute = 0;      // next minute that antipoison will run
 boolean displayDateOrTime = 0;        // are we displaying the date or time
-boolean vfdCurrentDisplayTime = 0;    // displaying weather now, or tomorrow's forecast
+boolean vfdCurrentDisplayTime = WEATHERNOW;    // displaying weather now, or tomorrow's forecast
 uint8_t weatherDisplayMode = 0;       // rotate, static now, static tomorrow
 boolean currentMatrixDisplayMode = 1; // dynamic or static. 1= dyn
-boolean currentMatrixDisplayTime = 1; // tmrw or now. 1 = now
+boolean currentMatrixDisplayTime = WEATHERNOW; // tmrw or now. 1 = now
 uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
 // Struct for clock user settings
 struct DeviceSettings
@@ -208,14 +210,15 @@ void setup()
   delay(1000);
   // set display brightness
   // analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
-  analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
+  //Disable dimming for now
+  // analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
   setMatrixWeatherDisplay();
 }
 
 void loop()
 {
   // turn off time
-  if (digitalRead(ON_OFF_SW_PIN) && isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour)) // HIGH, switch is off, in auto position
+  if (digitalRead(ON_OFF_SW_PIN) && isBetweenHours(hour, settings.displayOffHour, settings.displayOnHour)) // LOW, switch is ON, in auto position
   {
     // turn off supply and go to sleep, until waken by interrupt or by timer
     digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, LOW);
@@ -223,8 +226,8 @@ void loop()
     Serial.println("SLEEPING");
     delay(1000);
     // Configure wakeup time to wake up at displayOnHour
-    uint64_t wakeup_interval_us = ((((settings.displayOnHour - hour + 24) % 24) * 3600) - (minute * 60) - second) * 1000000; // Calculate the time until displayOnHour
-    Serial.println(wakeup_interval_us / 1000000);
+    uint64_t wakeup_interval_us = ((((settings.displayOnHour - hour + 24) % 24) * 3600) - (minute * 60) - second) * 1000000ULL; // Calculate the time until displayOnHour
+    Serial.println(wakeup_interval_us);
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW); // this pin has the auto/off switch on it
     esp_sleep_enable_timer_wakeup(wakeup_interval_us);
 
@@ -273,6 +276,7 @@ void loop()
     Nixies.antiPoison();
     // matrix.antiPoison();
   }
+
   // weather section
   if (minute == nextMinuteToUpdateWeather) // update the weather forcast
   {
@@ -320,15 +324,17 @@ void loop()
       ivtubes.shiftOutString("СЕЙЧАС");
       digitalWrite(NOW_LED_PIN, HIGH);
       digitalWrite(TMRW_LED_PIN, LOW);
-      vfdCurrentDisplayTime = true;
-      currentMatrixDisplayTime = true;
+      vfdCurrentDisplayTime = WEATHERNOW;
+      currentMatrixDisplayTime = WEATHERNOW;
+      setMatrixWeatherDisplay();
       break;
     case 1:
       ivtubes.shiftOutString("ЗАВТРА");
       digitalWrite(NOW_LED_PIN, LOW);
       digitalWrite(TMRW_LED_PIN, HIGH);
-      vfdCurrentDisplayTime = false;
-      currentMatrixDisplayTime = false;
+      vfdCurrentDisplayTime = WEATHERTMRW;
+      currentMatrixDisplayTime = WEATHERTMRW;
+      setMatrixWeatherDisplay();
       break;
     case 2:
       nextSecondToChangeWeatherTime = 0;
@@ -383,7 +389,7 @@ void settingsMenu()
       break;
     case 4: // set on off time for display
       ivtubes.setScrollingString("On Hour / Off Hour", 150);
-      Nixies.writeToNixie(settings.displayOffHour, 255, settings.displayOnHour, 8);
+      Nixies.writeToNixie(settings.displayOnHour, 255, settings.displayOffHour, 8);
       break;
     case 5:
       ivtubes.setScrollingString("Anti Poison Timer", 150);
@@ -961,17 +967,20 @@ void initWiFi()
 {
   Serial.printf("Connecting to %s ", ssid);
   WiFi.begin(ssid, password);
+  matrix.setAnimationToDisplay(loadingAnimation);
   ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 150); // connecting to wifi
   while (WiFi.status() != WL_CONNECTED)
   {
     digitalWrite(WIFI_LED_PIN, !(digitalRead(WIFI_LED_PIN)));
     ivtubes.scrollString();
+    matrix.animateDisplay();
     delay(75);
     Serial.print(".");
   }
   digitalWrite(WIFI_LED_PIN, HIGH);
   Serial.println(" CONNECTED");
   //WiFi.setSleep(true);                          // enable wifi sleep for power savings
+  matrix.writeStaticImgToDisplay(const_cast<uint32_t *>(checkMarkIcon));
   ivtubes.setScrollingString("ПОДКЛЮЧЕН ", 150); // connected
   ivtubes.scrollStringSync();
 }
