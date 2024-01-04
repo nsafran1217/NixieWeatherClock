@@ -49,9 +49,18 @@
 
 #define INS1_DISPLAYS 2 // number of INS1 6x10 matrices
 #define IV17_DISPLAYS 6 // number of iv17 tubes
-
+// Status defines
 #define WEATHERNOW true
 #define WEATHERTMRW false
+#define NIXIE_MODE_DISPLAY_TIME 0
+#define NIXIE_MODE_DISPLAY_DATE 1
+#define NIXIE_MODE_DISPLAY_ROTATE 2
+#define NIXIE_IS_DISPLAY_TIME true
+#define NIXIE_IS_DISPLAY_DATE false
+#define WEATHER_DISPLAY_NOW 0
+#define WEATHER_DISPLAY_TMRW 1
+#define WEATHER_DISPLAY_ROTATE 2
+
 
 const char *PhoneIPAddress = "10.35.0.98"; // used to detect if i am home
 const char *ssid = WIFI_SSID;
@@ -88,22 +97,21 @@ struct Weather
 };
 Weather weather;
 // Timer Vars
-uint16_t userInputBlinkTime = 500;
-uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
+const uint16_t userInputBlinkTime = 500;
+const uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
 uint8_t nextMinuteToUpdateWeather = 0;
 uint8_t lastWeatherCheckMin = 0; // Last Minute weather was checked
+uint8_t nextPoisonRunMinute = 0;      // next minute that antipoison will run
 uint8_t nextSecondToChangeDateTimeModes = 0;
 uint8_t nextSecondToChangeWeatherTime = 0;
 unsigned long userNotifyTimer = 0;
 // Mode Vars
-uint8_t timeDateDisplayMode = 0;      // display time, date, or rotate between them
-uint8_t nextPoisonRunMinute = 0;      // next minute that antipoison will run
-boolean displayDateOrTime = 0;        // are we displaying the date or time
+uint8_t timeDateDisplayMode = NIXIE_MODE_DISPLAY_TIME;      // display time, date, or rotate between them
+boolean displayDateOrTime = NIXIE_IS_DISPLAY_TIME;        // are we displaying the date or time
 boolean vfdCurrentDisplayTime = WEATHERNOW;    // displaying weather now, or tomorrow's forecast
-uint8_t weatherDisplayMode = 0;       // rotate, static now, static tomorrow
-boolean currentMatrixDisplayMode = 1; // dynamic or static. 1= dyn
+uint8_t weatherDisplayMode = WEATHER_DISPLAY_ROTATE;       // rotate, static now, static tomorrow
+boolean matrixDisplayDynamic = true; // dynamic or static. true=dyn
 boolean currentMatrixDisplayTime = WEATHERNOW; // tmrw or now. 1 = now
-uint8_t wifiStatusLED = 0;            // 0=off, 1=on, 2=blinking
 // Struct for clock user settings
 struct DeviceSettings
 {
@@ -294,7 +302,7 @@ void loop()
     //Serial.println(userNotifyTimer);
     displayVFDWeather();
   }
-  if (weatherDisplayMode == 2) // if in rotate mode, do the rotation. otherwise we update it when we refresh the forecast
+  if (weatherDisplayMode == WEATHER_DISPLAY_ROTATE) // if in rotate mode, do the rotation. otherwise we update it when we refresh the forecast
   {
     if (second == nextSecondToChangeWeatherTime)
     {
@@ -320,7 +328,7 @@ void loop()
     weatherDisplayMode = (weatherDisplayMode + 1) % 3; // 3 modes, loop back to 0
     switch (weatherDisplayMode)
     {
-    case 0:
+    case WEATHER_DISPLAY_NOW:
       ivtubes.shiftOutString("СЕЙЧАС");
       digitalWrite(NOW_LED_PIN, HIGH);
       digitalWrite(TMRW_LED_PIN, LOW);
@@ -328,7 +336,7 @@ void loop()
       currentMatrixDisplayTime = WEATHERNOW;
       setMatrixWeatherDisplay();
       break;
-    case 1:
+    case WEATHER_DISPLAY_TMRW:
       ivtubes.shiftOutString("ЗАВТРА");
       digitalWrite(NOW_LED_PIN, LOW);
       digitalWrite(TMRW_LED_PIN, HIGH);
@@ -336,7 +344,7 @@ void loop()
       currentMatrixDisplayTime = WEATHERTMRW;
       setMatrixWeatherDisplay();
       break;
-    case 2:
+    case WEATHER_DISPLAY_ROTATE:
       nextSecondToChangeWeatherTime = 0;
       ivtubes.shiftOutString("ДИН   ");
     }
@@ -344,10 +352,10 @@ void loop()
   }
 
   // matrix section
-  if (digitalRead(DYN_STAT_SW_PIN) != currentMatrixDisplayMode)
+  if (digitalRead(DYN_STAT_SW_PIN) != matrixDisplayDynamic)
   {
     // Switch off = high = animate
-    currentMatrixDisplayMode = !currentMatrixDisplayMode;
+    matrixDisplayDynamic = !matrixDisplayDynamic;
     setMatrixWeatherDisplay();
   }
   displayMatrixWeather(); // display weather, animate if needed
@@ -854,8 +862,8 @@ void setMatrixWeatherDisplay()
   //Serial.println(weather.tmrwIcon);
   //Serial.println(weather.currentIcon);
   Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
-  Serial.println(currentMatrixDisplayMode);
-  if (currentMatrixDisplayMode)
+  Serial.println(matrixDisplayDynamic);
+  if (matrixDisplayDynamic)
   {
     
     matrix.setAnimationToDisplay(iconToDisplay);
@@ -867,7 +875,7 @@ void setMatrixWeatherDisplay()
 }
 void displayMatrixWeather()
 {
-  if (currentMatrixDisplayMode) // if true, animate the display
+  if (matrixDisplayDynamic) // if true, animate the display
   {
     matrix.animateDisplay();
   }
