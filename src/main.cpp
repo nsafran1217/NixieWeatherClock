@@ -215,12 +215,7 @@ void setup()
   // init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   updateDateTime();
-  settings.poisonTimeSpan = 2; // debugging
-  nextPoisonRunMinute = (settings.poisonTimeStart + settings.poisonTimeSpan) % 60;
-  while (nextPoisonRunMinute < minute)
-  {
-    nextPoisonRunMinute = nextPoisonRunMinute + settings.poisonTimeSpan;
-  }
+  nextPoisonRunMinute = (settings.poisonTimeStart + settings.poisonTimeSpan) % 60; // this could cause the antipoison to not run for an hour
   nextMinuteToUpdateWeather = ((minute / 10) * 10) + 10;
   updateWeather();
   setCpuFrequencyMhz(80); // slow down for power savings
@@ -614,7 +609,7 @@ void setAntiPoisonMinute()
 {
   uint8_t digits[3] = {settings.poisonTimeStart, 255, settings.poisonTimeSpan};
   uint8_t minValues[3] = {0, 0, 5};
-  uint8_t maxValues[3] = {59, 0, 60};
+  uint8_t maxValues[3] = {29, 0, 30};
   userInputClock(digits, minValues, maxValues, ALLOFF);
   settings.poisonTimeStart = digits[0];
   settings.poisonTimeSpan = digits[2];
