@@ -39,7 +39,7 @@
 
 #define SHUTDOWN_PWR_SUPPLY_PIN 4 // set HIGH to enable power supplies. LOW to turn them off
 
-#define DYN_STAT_SW_PIN 5//13
+#define DYN_STAT_SW_PIN 5 // 13
 #define ON_OFF_SW_PIN 27
 
 #define WEATHER_MODE_BTN_PIN 35 // value may change
@@ -61,7 +61,6 @@
 #define WEATHER_DISPLAY_TMRW 1
 #define WEATHER_DISPLAY_ROTATE 2
 
-
 const char *PhoneIPAddress = "10.35.0.98"; // used to detect if i am home
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
@@ -77,6 +76,10 @@ String apiCallURL = "http://api.openweathermap.org/data/3.0/onecall?exclude=minu
 INS1Matrix matrix = INS1Matrix(INS1_DATA_PIN, INS1_CLK_PIN, INS1_LATCH_PIN, INS1_BLNK_PIN, true, INS1_DISPLAYS);
 IV17 ivtubes = IV17(IV17_DATA_PIN, IV17_CLK_PIN, IV17_STRB_PIN, IV17_BLNK_PIN, IV17_DISPLAYS);
 NixieBoard Nixies = NixieBoard(IN12_DATA_PIN, IN12_CLK_PIN, IN12_LATCH_PIN);
+
+const TickType_t delay500ms = pdMS_TO_TICKS(500);
+SemaphoreHandle_t nixieMutex;
+SemaphoreHandle_t ivtubesMutex;
 // Global Vars
 // Rotary Encoder
 uint8_t currentStateCLK = 0, lastStateCLK = 0;
@@ -101,17 +104,17 @@ const uint16_t userInputBlinkTime = 500;
 const uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
 uint8_t nextMinuteToUpdateWeather = 0;
 uint8_t lastWeatherCheckMin = 0; // Last Minute weather was checked
-uint8_t nextPoisonRunMinute = 0;      // next minute that antipoison will run
+uint8_t nextPoisonRunMinute = 0; // next minute that antipoison will run
 uint8_t nextSecondToChangeDateTimeModes = 0;
 uint8_t nextSecondToChangeWeatherTime = 0;
 unsigned long userNotifyTimer = 0;
 // Mode Vars
-uint8_t timeDateDisplayMode = NIXIE_MODE_DISPLAY_TIME;      // display time, date, or rotate between them
-boolean displayDateOrTime = NIXIE_IS_DISPLAY_TIME;        // are we displaying the date or time
-boolean vfdCurrentDisplayTime = WEATHERNOW;    // displaying weather now, or tomorrow's forecast
-uint8_t weatherDisplayMode = WEATHER_DISPLAY_ROTATE;       // rotate, static now, static tomorrow
-boolean matrixDisplayDynamic = true; // dynamic or static. true=dyn
-boolean currentMatrixDisplayTime = WEATHERNOW; // tmrw or now. 1 = now
+uint8_t timeDateDisplayMode = NIXIE_MODE_DISPLAY_TIME; // display time, date, or rotate between them
+boolean displayDateOrTime = NIXIE_IS_DISPLAY_TIME;     // are we displaying the date or time
+boolean vfdCurrentDisplayTime = WEATHERNOW;            // displaying weather now, or tomorrow's forecast
+uint8_t weatherDisplayMode = WEATHER_DISPLAY_ROTATE;   // rotate, static now, static tomorrow
+boolean matrixDisplayDynamic = true;                   // dynamic or static. true=dyn
+boolean currentMatrixDisplayTime = WEATHERNOW;         // tmrw or now. 1 = now
 // Struct for clock user settings
 struct DeviceSettings
 {
@@ -144,6 +147,7 @@ int changeMode(int mode, int numOfModes);
 void updateDateTime();
 void displayTime();
 void scrollNixieTimeTask(void *parameter);
+void nixieAntiPoisonTask(void *parameter);
 void displayDate();
 void updateWeather();
 const uint32_t *selectIcon(const char *iconStr);
@@ -203,7 +207,6 @@ void setup()
   currentStateCLK = digitalRead(ROTCLK_PIN);
   lastStateCLK = currentStateCLK;
 
-  nextPoisonRunMinute = settings.poisonTimeStart + settings.poisonTimeSpan;
   // blank display while booting
   matrix.writeStaticImgToDisplay(matrixAllOff);
   Nixies.writeToNixie(255, 255, 255, 0);
@@ -212,13 +215,21 @@ void setup()
   // init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   updateDateTime();
+  settings.poisonTimeSpan = 2; // debugging
+  nextPoisonRunMinute = (settings.poisonTimeStart + settings.poisonTimeSpan) % 60;
+  while (nextPoisonRunMinute < minute)
+  {
+    nextPoisonRunMinute = nextPoisonRunMinute + settings.poisonTimeSpan;
+  }
   nextMinuteToUpdateWeather = ((minute / 10) * 10) + 10;
   updateWeather();
   setCpuFrequencyMhz(80); // slow down for power savings
+  nixieMutex = xSemaphoreCreateMutex();
+  ivtubesMutex = xSemaphoreCreateMutex();
   delay(1000);
   // set display brightness
   // analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
-  //Disable dimming for now
+  // Disable dimming for now
   // analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
   setMatrixWeatherDisplay();
 }
@@ -258,7 +269,19 @@ void loop()
   // NixieTube section
   timeDateDisplayMode = changeMode(timeDateDisplayMode, 2); // rotary encoder to change time mode while in main loop
   updateDateTime();                                         // update the time vars
-  switch (timeDateDisplayMode)                              // rotate, or just display date or time
+  if (minute == nextPoisonRunMinute)
+  {
+    nextPoisonRunMinute = (nextPoisonRunMinute + settings.poisonTimeSpan) % 60;
+    xTaskCreate(
+        nixieAntiPoisonTask,      // Function that should be called
+        "anit poison for Nixies", // Name of the task (for debugging)
+        1000,                     // Stack size (bytes)
+        NULL,                     // Parameter to pass
+        5,                        // Task priority
+        NULL                      // Task handle
+    );
+  }
+  switch (timeDateDisplayMode) // rotate, or just display date or time
   {
   case 0:
     displayTime();
@@ -278,12 +301,6 @@ void loop()
       displayDate();
     break;
   }
-  if (minute == nextPoisonRunMinute)
-  {
-    nextPoisonRunMinute = (nextPoisonRunMinute + settings.poisonTimeSpan) % 60;
-    Nixies.antiPoison();
-    // matrix.antiPoison();
-  }
 
   // weather section
   if (minute == nextMinuteToUpdateWeather) // update the weather forcast
@@ -298,8 +315,8 @@ void loop()
   // VFD section
   if (millis() > userNotifyTimer + 1000) // allow time for VFD to notify user, then redisplay the weather
   {
-      userNotifyTimer = UINT32_MAX - 1001; // set to max value
-    //Serial.println(userNotifyTimer);
+    userNotifyTimer = UINT32_MAX - 1001; // set to max value
+    // Serial.println(userNotifyTimer);
     displayVFDWeather();
   }
   if (weatherDisplayMode == WEATHER_DISPLAY_ROTATE) // if in rotate mode, do the rotation. otherwise we update it when we refresh the forecast
@@ -363,7 +380,11 @@ void loop()
   // Settings section
   if (readButton(ROTBTTN_PIN))
   {
-    settingsMenu();
+    if (xSemaphoreTake(nixieMutex, delay500ms) == pdTRUE)
+    {
+      settingsMenu();
+      xSemaphoreGive(nixieMutex);
+    }
   }
 }
 // user input via encoder to change clock settings
@@ -689,7 +710,7 @@ void updateDateTime()
   while (!getLocalTime(&timeinfo)) // todo, add a timeout to reset the program
   {
     Serial.println("Failed to obtain time");
-    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ", 100);
+    ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ ", 100);
     ivtubes.scrollStringSync();
     // return;
   }
@@ -721,17 +742,38 @@ void displayTime()
   }
   else
   {
-    Nixies.writeToNixie((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+    if (xSemaphoreTake(nixieMutex, delay500ms) == pdTRUE)
+    {
+      Nixies.writeToNixie((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+      xSemaphoreGive(nixieMutex); // Release the mutex
+    }
   }
 }
 void scrollNixieTimeTask(void *parameter) // used as a task
 {
-  Nixies.writeToNixieScroll((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+  if (xSemaphoreTake(nixieMutex, delay500ms) == pdTRUE)
+  {
+    Nixies.writeToNixieScroll((settings.twelveHourMode ? (hour > 12 ? hour - 12 : (hour == 00 ? 12 : hour)) : hour), minute, second, (second % 2 ? ALLOFF : ALLON));
+    xSemaphoreGive(nixieMutex); // Release the mutex
+  }
+  vTaskDelete(NULL);
+}
+void nixieAntiPoisonTask(void *parameter) // used as a task
+{
+  if (xSemaphoreTake(nixieMutex, delay500ms) == pdTRUE)
+  {
+    Nixies.antiPoison();
+    xSemaphoreGive(nixieMutex); // Release the mutex
+  }
   vTaskDelete(NULL);
 }
 void displayDate()
 {
-  Nixies.writeToNixie(month, day, year - 2000, (second % 2 ? ALLOFF : 6));
+  if (xSemaphoreTake(nixieMutex, delay500ms) == pdTRUE)
+  {
+    Nixies.writeToNixie(month, day, year - 2000, (second % 2 ? ALLOFF : 6));
+    xSemaphoreGive(nixieMutex);
+  }
 }
 void updateWeather()
 {
@@ -764,10 +806,12 @@ void updateWeather()
 
   if (error)
   {
+    digitalWrite(WIFI_LED_PIN, LOW);
     Serial.print("deserializeJson() failed: ");
-    //Serial.println(error.c_str());
+    // Serial.println(error.c_str());
     return;
   }
+  digitalWrite(WIFI_LED_PIN, HIGH);
 
   // current
   weather.currentTemp = doc["current"]["temp"]; // 65.62
@@ -846,12 +890,12 @@ void displayVFDWeather()
   }
   ivtubes.shiftOutString(weatherVFD);
 
-  //Serial.println(weather.currentTemp);
-  //Serial.println(weather.currentPOP);
-  //Serial.println(weather.currentIcon);
-  //Serial.println(weather.tmrwDayTemp);
-  //Serial.println(weather.tmrwPOP);
-  //Serial.println(weather.tmrwIcon);
+  // Serial.println(weather.currentTemp);
+  // Serial.println(weather.currentPOP);
+  // Serial.println(weather.currentIcon);
+  // Serial.println(weather.tmrwDayTemp);
+  // Serial.println(weather.tmrwPOP);
+  // Serial.println(weather.tmrwIcon);
   Serial.println(weatherVFD);
   free(weatherVFD);
 }
@@ -859,13 +903,13 @@ void setMatrixWeatherDisplay()
 {
   const uint32_t *iconToDisplay = selectIcon(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
   Serial.println(currentMatrixDisplayTime);
-  //Serial.println(weather.tmrwIcon);
-  //Serial.println(weather.currentIcon);
+  // Serial.println(weather.tmrwIcon);
+  // Serial.println(weather.currentIcon);
   Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
   Serial.println(matrixDisplayDynamic);
   if (matrixDisplayDynamic)
   {
-    
+
     matrix.setAnimationToDisplay(iconToDisplay);
   }
   else
@@ -987,7 +1031,7 @@ void initWiFi()
   }
   digitalWrite(WIFI_LED_PIN, HIGH);
   Serial.println(" CONNECTED");
-  //WiFi.setSleep(true);                          // enable wifi sleep for power savings
+  // WiFi.setSleep(true);                          // enable wifi sleep for power savings
   matrix.writeStaticImgToDisplay(const_cast<uint32_t *>(checkMarkIcon));
   ivtubes.setScrollingString("ПОДКЛЮЧЕН ", 150); // connected
   ivtubes.scrollStringSync();
