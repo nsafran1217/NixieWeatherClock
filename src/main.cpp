@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <time.h>
 #include <ESP32Ping.h>
+#include <cstring>
 
 #include <INS1Matrix.h>
 #include <IV17.h>
@@ -82,6 +83,8 @@ const TickType_t delay500ms = pdMS_TO_TICKS(500);
 SemaphoreHandle_t nixieMutex;
 SemaphoreHandle_t ivtubesMutex;
 SemaphoreHandle_t weatherMutex;
+SemaphoreHandle_t matrixMutex;
+SemaphoreHandle_t updateWeatherTaskMutex;
 // Global Vars
 // Rotary Encoder
 uint8_t currentStateCLK = 0, lastStateCLK = 0;
@@ -152,6 +155,7 @@ void updateWeather();
 const uint32_t *selectIcon(const char *iconStr);
 void displayVFDWeather();
 void setMatrixWeatherDisplay();
+void setMatrixWeatherDisplayTask(void *parameter);
 void displayMatrixWeather();
 String httpGETRequest(const char *serverName);
 boolean isBetweenHours(int hour, int displayOffHour, int displayOn);
@@ -209,6 +213,8 @@ void setup()
   nixieMutex = xSemaphoreCreateMutex();
   ivtubesMutex = xSemaphoreCreateMutex();
   weatherMutex = xSemaphoreCreateMutex();
+  matrixMutex = xSemaphoreCreateMutex();
+  updateWeatherTaskMutex = xSemaphoreCreateMutex();
   // connect to WiFi
   initWiFi();
   // init and get the time
@@ -296,8 +302,11 @@ void loop()
     nextMinuteToUpdateWeather = (minute + weatherCheckFreqMin) % 60;
     Serial.println("UPDATE WEATHER");
     updateWeather();
-    displayVFDWeather();       // only callled when we update the weather. Otherwise, its static
-    setMatrixWeatherDisplay(); // and update what it set for the matrix
+    if (weatherDisplayMode != WEATHER_DISPLAY_ROTATE)
+    { // issue is these will run before the weather struct is updates most likely
+      displayVFDWeather();       // only callled when we update the weather. Otherwise, its static
+      setMatrixWeatherDisplay(); // and update what it set for the matrix
+    }
   }
 
   // VFD section
@@ -325,7 +334,14 @@ void loop()
         digitalWrite(TMRW_LED_PIN, HIGH);
       }
       displayVFDWeather();
-      setMatrixWeatherDisplay();
+      if (xSemaphoreTake(weatherMutex, delay500ms) == pdTRUE)
+      {
+        if (std::memcmp(weather.currentIcon, weather.tmrwIcon, sizeof(weather.currentIcon)) != 0) // only change the display if the icons are different.
+        {
+          setMatrixWeatherDisplay();
+        }
+        xSemaphoreGive(weatherMutex);
+      }
     }
   }
   if (readButton(WEATHER_MODE_BTN_PIN)) // change VFD display mode
@@ -676,14 +692,15 @@ void updateDateTime()
 {
   struct tm timeinfo;
   int i = 0;
-  while (!getLocalTime(&timeinfo)) 
+  while (!getLocalTime(&timeinfo))
   {
     i++;
     Serial.println("Failed to obtain time");
     ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ ", 100);
     ivtubes.scrollStringSync();
-    if (i > 11) {
-      esp_restart();  //just reboot and try again
+    if (i > 10)
+    {
+      esp_restart(); // just reboot and try again
     }
   }
   hour = timeinfo.tm_hour;
@@ -762,82 +779,88 @@ void updateWeatherTask(void *parameter)
   //  Courtesy of https://arduinojson.org/v6/assistant
   //  Stream& input;
   //  for openweathermap
-
-  StaticJsonDocument<272> filter;
-
-  JsonObject filter_current = filter.createNestedObject("current");
-  filter_current["temp"] = true;
-  filter_current["weather"][0]["icon"] = true;
-  filter["hourly"][0]["pop"] = true;
-
-  JsonObject filter_daily_0 = filter["daily"].createNestedObject();
-  filter_daily_0["pop"] = true;
-
-  JsonObject filter_daily_0_temp = filter_daily_0.createNestedObject("temp");
-  filter_daily_0_temp["day"] = true;
-  filter_daily_0_temp["night"] = true;
-  filter_daily_0["weather"][0]["icon"] = true;
-
-  DynamicJsonDocument doc(3072);
-  Serial.println(WiFi.status());
-  DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
-  int count = 0;
-  while (error) // if we dont get the data, attempt to connect to wifi again
+  if (xSemaphoreTake(updateWeatherTaskMutex, pdMS_TO_TICKS(5)) == pdTRUE)
   {
-    count++;
-    digitalWrite(WIFI_LED_PIN, LOW);
-    Serial.print("deserializeJson() failed");
+    StaticJsonDocument<272> filter;
 
-    int i = 0;
-    if (WiFi.status() != WL_CONNECTED)
+    JsonObject filter_current = filter.createNestedObject("current");
+    filter_current["temp"] = true;
+    filter_current["weather"][0]["icon"] = true;
+    filter["hourly"][0]["pop"] = true;
+
+    JsonObject filter_daily_0 = filter["daily"].createNestedObject();
+    filter_daily_0["pop"] = true;
+
+    JsonObject filter_daily_0_temp = filter_daily_0.createNestedObject("temp");
+    filter_daily_0_temp["day"] = true;
+    filter_daily_0_temp["night"] = true;
+    filter_daily_0["weather"][0]["icon"] = true;
+
+    DynamicJsonDocument doc(3072);
+    Serial.println(WiFi.status());
+    DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
+    int count = 0;
+    while (error) // if we dont get the data, attempt to connect to wifi again
     {
-      WiFi.disconnect(true); // disconnect and turn off radio
-      WiFi.begin(ssid, password);
-      //WiFi.setSleep(WIFI_PS_NONE);
-      Serial.print("wifiBAD:");
-    }  else {
-      delay(500);
-      Serial.print("wifigood:");
-    }
-    while (WiFi.status() != WL_CONNECTED)
-    {
-      i++;
-      Serial.print(WiFi.status());
-      digitalWrite(WIFI_LED_PIN, !(digitalRead(WIFI_LED_PIN)));
-      delay(50);
-      // Serial.print(WiFi.status());
-      if (i > 600)
-      { // wait max of 30 seconds for wifi to come up.
-        digitalWrite(WIFI_LED_PIN, LOW);
-        vTaskDelete(NULL); // bail. light will be out to indicate an issue
+      count++;
+      digitalWrite(WIFI_LED_PIN, LOW);
+      Serial.print("deserializeJson() failed");
+
+      int i = 0;
+      if (WiFi.status() != WL_CONNECTED)
+      {
+        WiFi.disconnect(true); // disconnect and turn off radio
+        WiFi.begin(ssid, password);
+        // WiFi.setSleep(WIFI_PS_NONE);
+        Serial.print("wifiBAD:");
+      }
+      else
+      {
+        delay(500);
+        Serial.print("wifigood:");
+      }
+      while (WiFi.status() != WL_CONNECTED)
+      {
+        i++;
+        Serial.print(WiFi.status());
+        digitalWrite(WIFI_LED_PIN, !(digitalRead(WIFI_LED_PIN)));
+        delay(50);
+        // Serial.print(WiFi.status());
+        if (i > 600)
+        { // wait max of 30 seconds for wifi to come up.
+          digitalWrite(WIFI_LED_PIN, LOW);
+          vTaskDelete(NULL); // bail. light will be out to indicate an issue
+        }
+      }
+      error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter)); // wifi connected, so we should be good
+      // and if some reason we arent, it contiunes in this loop.
+      if (count > 10)
+      { // bail after 10 tries to get api while connected
+        vTaskDelete(NULL);
+        Serial.println("bailing, wifi connected");
       }
     }
-    error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter)); // wifi connected, so we should be good
-    // and if some reason we arent, it contiunes in this loop. 
-    if (count > 10) { //bail after 10 tries to get api while connected
-       vTaskDelete(NULL);
-       Serial.println("bailing, wifi connected");
-    }
-  }
-  digitalWrite(WIFI_LED_PIN, LOW);
-  if (xSemaphoreTake(weatherMutex, delay500ms))
-  {
-    // current
-    weather.currentTemp = doc["current"]["temp"]; // 65.62
-    const char *currIcon = doc["current"]["weather"][0]["icon"];
-    // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
-    weather.currentPOP = doc["daily"][0]["pop"];
-    // might need to just get pop from the daily forcast. this looks like itll be wrong.
-    //  tomorrow
-    weather.tmrwDayTemp = doc["daily"][1]["temp"]["day"];
-    weather.tmrwPOP = doc["daily"][1]["pop"];
-    const char *tmrwIcon = doc["daily"][1]["weather"][0]["icon"];
-    // copy to struct
-    strcpy(weather.currentIcon, currIcon);
-    strcpy(weather.tmrwIcon, tmrwIcon);
+    digitalWrite(WIFI_LED_PIN, LOW);
+    if (xSemaphoreTake(weatherMutex, delay500ms) == pdTRUE)
+    {
+      // current
+      weather.currentTemp = doc["current"]["temp"]; // 65.62
+      const char *currIcon = doc["current"]["weather"][0]["icon"];
+      // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
+      weather.currentPOP = doc["daily"][0]["pop"];
+      // might need to just get pop from the daily forcast. this looks like itll be wrong.
+      //  tomorrow
+      weather.tmrwDayTemp = doc["daily"][1]["temp"]["day"];
+      weather.tmrwPOP = doc["daily"][1]["pop"];
+      const char *tmrwIcon = doc["daily"][1]["weather"][0]["icon"];
+      // copy to struct
+      strcpy(weather.currentIcon, currIcon);
+      strcpy(weather.tmrwIcon, tmrwIcon);
 
-    xSemaphoreGive(weatherMutex);
-    digitalWrite(WIFI_LED_PIN, HIGH);
+      xSemaphoreGive(weatherMutex);
+      digitalWrite(WIFI_LED_PIN, HIGH);
+    }
+    xSemaphoreGive(updateWeatherTaskMutex);
   }
   vTaskDelete(NULL);
 }
@@ -899,7 +922,7 @@ const uint32_t *selectIcon(const char *iconStr)
 void displayVFDWeather()
 {
   //  todo, maybe round
-  if (xSemaphoreTake(weatherMutex, delay500ms))
+  if (xSemaphoreTake(weatherMutex, delay500ms) == pdTRUE)
   {
     if (vfdCurrentDisplayTime)
     {
@@ -929,32 +952,47 @@ void displayVFDWeather()
 }
 void setMatrixWeatherDisplay()
 {
-  if (xSemaphoreTake(weatherMutex, delay500ms))
+  if (xSemaphoreTake(weatherMutex, delay500ms) == pdTRUE)
   {
     const uint32_t *iconToDisplay = selectIcon(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
     xSemaphoreGive(weatherMutex);
-
-    // Serial.println(currentMatrixDisplayTime);
-    //  Serial.println(weather.tmrwIcon);
-    //  Serial.println(weather.currentIcon);
-    // Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
-    // Serial.println(matrixDisplayDynamic);
+    xTaskCreate(
+        setMatrixWeatherDisplayTask, // Function that should be called
+        "set the matrix display",    // Name of the task (for debugging)
+        1000,                        // Stack size (bytes)
+        (void *)iconToDisplay,       // Parameter to pass
+        5,                           // Task priority
+        NULL                         // Task handle
+    );
+  }
+}
+void setMatrixWeatherDisplayTask(void *parameter)
+{
+  const uint32_t *iconToDisplay = static_cast<const uint32_t *>(parameter);
+  if (xSemaphoreTake(matrixMutex, delay500ms) == pdTRUE)
+  {
     if (matrixDisplayDynamic)
     {
-
       matrix.setAnimationToDisplay(iconToDisplay);
     }
     else
     {
       matrix.writeStaticImgToDisplay(const_cast<uint32_t *>((iconToDisplay + 1))); // just display the first frame of icon
     }
+    // matrix.fancyTransitionFrame(const_cast<uint32_t *>((iconToDisplay + 1)), VERTICAL_TRANSITION, 5);
+    xSemaphoreGive(matrixMutex);
   }
+  vTaskDelete(NULL);
 }
 void displayMatrixWeather()
 {
   if (matrixDisplayDynamic) // if true, animate the display
   {
-    matrix.animateDisplay();
+    if (xSemaphoreTake(matrixMutex, pdMS_TO_TICKS(5)) == pdTRUE) // 5 ms timeout
+    {
+      matrix.animateDisplay();
+      xSemaphoreGive(matrixMutex);
+    }
   }
 }
 String httpGETRequest(const char *serverName)
@@ -1052,7 +1090,7 @@ void initWiFi()
 {
   Serial.printf("Connecting to %s ", ssid);
   WiFi.begin(ssid, password);
-  //WiFi.setSleep(WIFI_PS_NONE);
+  // WiFi.setSleep(WIFI_PS_NONE);
   matrix.setAnimationToDisplay(loadingAnimation);
   ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 150); // connecting to wifi
   while (WiFi.status() != WL_CONNECTED)
