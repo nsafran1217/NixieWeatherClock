@@ -77,9 +77,11 @@ INS1Matrix matrix = INS1Matrix(INS1_DATA_PIN, INS1_CLK_PIN, INS1_LATCH_PIN, INS1
 IV17 ivtubes = IV17(IV17_DATA_PIN, IV17_CLK_PIN, IV17_STRB_PIN, IV17_BLNK_PIN, IV17_DISPLAYS);
 NixieBoard Nixies = NixieBoard(IN12_DATA_PIN, IN12_CLK_PIN, IN12_LATCH_PIN);
 
+// Mutexs
 const TickType_t delay500ms = pdMS_TO_TICKS(500);
 SemaphoreHandle_t nixieMutex;
 SemaphoreHandle_t ivtubesMutex;
+SemaphoreHandle_t weatherMutex;
 // Global Vars
 // Rotary Encoder
 uint8_t currentStateCLK = 0, lastStateCLK = 0;
@@ -99,6 +101,7 @@ struct Weather
   char tmrwIcon[4];
 };
 Weather weather;
+char weatherVFD[7]; // characters displayed on VFD
 // Timer Vars
 const uint16_t userInputBlinkTime = 500;
 const uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
@@ -149,6 +152,7 @@ void displayTime();
 void scrollNixieTimeTask(void *parameter);
 void nixieAntiPoisonTask(void *parameter);
 void displayDate();
+void updateWeatherTask(void *parameter);
 void updateWeather();
 const uint32_t *selectIcon(const char *iconStr);
 void displayVFDWeather();
@@ -215,12 +219,13 @@ void setup()
   // init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   updateDateTime();
-  nextPoisonRunMinute = (settings.poisonTimeStart + settings.poisonTimeSpan) % 60; // this could cause the antipoison to not run for an hour
-  nextMinuteToUpdateWeather = ((minute / 10) * 10) + 10;
+  nextPoisonRunMinute = (minute + settings.poisonTimeSpan) % 60;
+  nextMinuteToUpdateWeather = (((minute / 10) * 10) + 10) % 60;
   updateWeather();
   setCpuFrequencyMhz(80); // slow down for power savings
   nixieMutex = xSemaphoreCreateMutex();
   ivtubesMutex = xSemaphoreCreateMutex();
+  weatherMutex = xSemaphoreCreateMutex();
   delay(1000);
   // set display brightness
   // analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
@@ -341,7 +346,11 @@ void loop()
     switch (weatherDisplayMode)
     {
     case WEATHER_DISPLAY_NOW:
-      ivtubes.shiftOutString("СЕЙЧАС");
+      if (xSemaphoreTake(ivtubesMutex, delay500ms) == pdTRUE)
+      {
+        ivtubes.shiftOutString("СЕЙЧАС");
+        xSemaphoreGive(ivtubesMutex);
+      }
       digitalWrite(NOW_LED_PIN, HIGH);
       digitalWrite(TMRW_LED_PIN, LOW);
       vfdCurrentDisplayTime = WEATHERNOW;
@@ -349,7 +358,11 @@ void loop()
       setMatrixWeatherDisplay();
       break;
     case WEATHER_DISPLAY_TMRW:
-      ivtubes.shiftOutString("ЗАВТРА");
+      if (xSemaphoreTake(ivtubesMutex, delay500ms) == pdTRUE)
+      {
+        ivtubes.shiftOutString("ЗАВТРА");
+        xSemaphoreGive(ivtubesMutex);
+      }
       digitalWrite(NOW_LED_PIN, LOW);
       digitalWrite(TMRW_LED_PIN, HIGH);
       vfdCurrentDisplayTime = WEATHERTMRW;
@@ -358,7 +371,11 @@ void loop()
       break;
     case WEATHER_DISPLAY_ROTATE:
       nextSecondToChangeWeatherTime = 0;
-      ivtubes.shiftOutString("ДИН   ");
+      if (xSemaphoreTake(ivtubesMutex, delay500ms) == pdTRUE)
+      {
+        ivtubes.shiftOutString("ДИН   ");
+        xSemaphoreGive(ivtubesMutex);
+      }
     }
     userNotifyTimer = millis();
   }
@@ -377,8 +394,16 @@ void loop()
   {
     if (xSemaphoreTake(nixieMutex, delay500ms) == pdTRUE)
     {
-      settingsMenu();
-      xSemaphoreGive(nixieMutex);
+      if (xSemaphoreTake(ivtubesMutex, delay500ms) == pdTRUE)
+      {
+        settingsMenu();
+        xSemaphoreGive(nixieMutex);
+        xSemaphoreGive(ivtubesMutex);
+      }
+      else
+      {
+        xSemaphoreGive(nixieMutex);
+      }
     }
   }
 }
@@ -762,6 +787,15 @@ void nixieAntiPoisonTask(void *parameter) // used as a task
   }
   vTaskDelete(NULL);
 }
+void vfdFancyTransitionTask(void *parameter) // used as a task
+{
+  if (xSemaphoreTake(ivtubesMutex, delay500ms) == pdTRUE)
+  {
+    ivtubes.fancyTransitionString(weatherVFD, VERTICAL_TRANSITION, 5);
+    xSemaphoreGive(ivtubesMutex); // Release the mutex
+  }
+  vTaskDelete(NULL);
+}
 void displayDate()
 {
   if (xSemaphoreTake(nixieMutex, delay500ms) == pdTRUE)
@@ -770,11 +804,8 @@ void displayDate()
     xSemaphoreGive(nixieMutex);
   }
 }
-void updateWeather()
+void updateWeatherTask(void *parameter)
 {
-  // char *num = (char *)malloc(7);
-  // snprintf(num, 7, "%06d", millis());
-  // ivtubes.shiftOutString(num);
   //  generated code below
   //  Courtesy of https://arduinojson.org/v6/assistant
   //  Stream& input;
@@ -796,31 +827,78 @@ void updateWeather()
   filter_daily_0["weather"][0]["icon"] = true;
 
   DynamicJsonDocument doc(3072);
-
+  Serial.println(WiFi.status());
   DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
-
-  if (error)
+  int count = 0;
+  while (error) // if we dont get the data, attempt to connect to wifi again
   {
+    count++;
     digitalWrite(WIFI_LED_PIN, LOW);
-    Serial.print("deserializeJson() failed: ");
-    // Serial.println(error.c_str());
-    return;
-  }
-  digitalWrite(WIFI_LED_PIN, HIGH);
+    Serial.print("deserializeJson() failed");
 
-  // current
-  weather.currentTemp = doc["current"]["temp"]; // 65.62
-  const char *currIcon = doc["current"]["weather"][0]["icon"];
-  // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
-  weather.currentPOP = doc["daily"][0]["pop"];
-  // might need to just get pop from the daily forcast. this looks like itll be wrong.
-  //  tomorrow
-  weather.tmrwDayTemp = doc["daily"][1]["temp"]["day"];
-  weather.tmrwPOP = doc["daily"][1]["pop"];
-  const char *tmrwIcon = doc["daily"][1]["weather"][0]["icon"];
-  // copy to struct
-  strcpy(weather.currentIcon, currIcon);
-  strcpy(weather.tmrwIcon, tmrwIcon);
+    int i = 0;
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      WiFi.disconnect(true); // disconnect and turn off radio
+      WiFi.begin(ssid, password);
+      //WiFi.setSleep(WIFI_PS_NONE);
+      Serial.print("wifiBAD:");
+    }  else {
+      delay(500);
+      Serial.print("wifigood:");
+    }
+    while (WiFi.status() != WL_CONNECTED)
+    {
+      i++;
+      Serial.print(WiFi.status());
+      digitalWrite(WIFI_LED_PIN, !(digitalRead(WIFI_LED_PIN)));
+      delay(50);
+      // Serial.print(WiFi.status());
+      if (i > 600)
+      { // wait max of 30 seconds for wifi to come up.
+        digitalWrite(WIFI_LED_PIN, LOW);
+        vTaskDelete(NULL); // bail. light will be out to indicate an issue
+      }
+    }
+    error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter)); // wifi connected, so we should be good
+    // and if some reason we arent, it contiunes in this loop. 
+    if (count > 10) { //bail after 10 tries to get api while connected
+       vTaskDelete(NULL);
+       Serial.println("bailing, wifi connected");
+    }
+  }
+  digitalWrite(WIFI_LED_PIN, LOW);
+  if (xSemaphoreTake(weatherMutex, delay500ms))
+  {
+    // current
+    weather.currentTemp = doc["current"]["temp"]; // 65.62
+    const char *currIcon = doc["current"]["weather"][0]["icon"];
+    // currentPOP = minute < 15 ? doc["hourly"][0]["pop"] : doc["hourly"][1]["pop"]; // if 15 min past hour, then display pop for next hour
+    weather.currentPOP = doc["daily"][0]["pop"];
+    // might need to just get pop from the daily forcast. this looks like itll be wrong.
+    //  tomorrow
+    weather.tmrwDayTemp = doc["daily"][1]["temp"]["day"];
+    weather.tmrwPOP = doc["daily"][1]["pop"];
+    const char *tmrwIcon = doc["daily"][1]["weather"][0]["icon"];
+    // copy to struct
+    strcpy(weather.currentIcon, currIcon);
+    strcpy(weather.tmrwIcon, tmrwIcon);
+
+    xSemaphoreGive(weatherMutex);
+    digitalWrite(WIFI_LED_PIN, HIGH);
+  }
+  vTaskDelete(NULL);
+}
+void updateWeather()
+{
+  xTaskCreate(
+      updateWeatherTask,       // Function that should be called
+      "update weather struct", // Name of the task (for debugging)
+      4000,                    // Stack size (bytes)
+      NULL,                    // Parameter to pass
+      5,                       // Task priority
+      NULL                     // Task handle
+  );
 }
 const uint32_t *selectIcon(const char *iconStr)
 {
@@ -868,48 +946,56 @@ const uint32_t *selectIcon(const char *iconStr)
 
 void displayVFDWeather()
 {
-  char *weatherVFD = (char *)malloc(7);
-  // todo, maybe round
-
-  if (vfdCurrentDisplayTime)
+  //  todo, maybe round
+  if (xSemaphoreTake(weatherMutex, delay500ms))
   {
-    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(weather.currentTemp), int(weather.currentPOP * 100));
-    digitalWrite(NOW_LED_PIN, HIGH);
-    digitalWrite(TMRW_LED_PIN, LOW);
-  }
-  else
-  {
-    snprintf(weatherVFD, 7, "%02d\037%02d%%", int(weather.tmrwDayTemp), int(weather.tmrwPOP * 100));
-    digitalWrite(NOW_LED_PIN, LOW);
-    digitalWrite(TMRW_LED_PIN, HIGH);
-  }
-  ivtubes.shiftOutString(weatherVFD);
+    if (vfdCurrentDisplayTime)
+    {
+      snprintf(weatherVFD, 7, "%02d\037%02d%%", int(weather.currentTemp), int(weather.currentPOP * 100));
+      digitalWrite(NOW_LED_PIN, HIGH);
+      digitalWrite(TMRW_LED_PIN, LOW);
+    }
+    else
+    {
+      snprintf(weatherVFD, 7, "%02d\037%02d%%", int(weather.tmrwDayTemp), int(weather.tmrwPOP * 100));
+      digitalWrite(NOW_LED_PIN, LOW);
+      digitalWrite(TMRW_LED_PIN, HIGH);
+    }
+    xSemaphoreGive(weatherMutex);
+    xTaskCreate(
+        vfdFancyTransitionTask,        // Function that should be called
+        "fancy transition of ivtubes", // Name of the task (for debugging)
+        1000,                          // Stack size (bytes)
+        NULL,                          // Parameter to pass
+        4,                             // Task priority
+        NULL                           // Task handle
+    );
+    // ivtubes.shiftOutString(weatherVFD);
 
-  // Serial.println(weather.currentTemp);
-  // Serial.println(weather.currentPOP);
-  // Serial.println(weather.currentIcon);
-  // Serial.println(weather.tmrwDayTemp);
-  // Serial.println(weather.tmrwPOP);
-  // Serial.println(weather.tmrwIcon);
-  Serial.println(weatherVFD);
-  free(weatherVFD);
+    // Serial.println(weatherVFD);
+  }
 }
 void setMatrixWeatherDisplay()
 {
-  const uint32_t *iconToDisplay = selectIcon(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
-  Serial.println(currentMatrixDisplayTime);
-  // Serial.println(weather.tmrwIcon);
-  // Serial.println(weather.currentIcon);
-  Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
-  Serial.println(matrixDisplayDynamic);
-  if (matrixDisplayDynamic)
+  if (xSemaphoreTake(weatherMutex, delay500ms))
   {
+    const uint32_t *iconToDisplay = selectIcon(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
+    xSemaphoreGive(weatherMutex);
 
-    matrix.setAnimationToDisplay(iconToDisplay);
-  }
-  else
-  {
-    matrix.writeStaticImgToDisplay(const_cast<uint32_t *>((iconToDisplay + 1))); // just display the first frame of icon
+    // Serial.println(currentMatrixDisplayTime);
+    //  Serial.println(weather.tmrwIcon);
+    //  Serial.println(weather.currentIcon);
+    // Serial.println(currentMatrixDisplayTime ? weather.currentIcon : weather.tmrwIcon);
+    // Serial.println(matrixDisplayDynamic);
+    if (matrixDisplayDynamic)
+    {
+
+      matrix.setAnimationToDisplay(iconToDisplay);
+    }
+    else
+    {
+      matrix.writeStaticImgToDisplay(const_cast<uint32_t *>((iconToDisplay + 1))); // just display the first frame of icon
+    }
   }
 }
 void displayMatrixWeather()
@@ -1014,6 +1100,7 @@ void initWiFi()
 {
   Serial.printf("Connecting to %s ", ssid);
   WiFi.begin(ssid, password);
+  //WiFi.setSleep(WIFI_PS_NONE);
   matrix.setAnimationToDisplay(loadingAnimation);
   ivtubes.setScrollingString("ПОДКЛЮЧЕНИЕ К Wi-Fi", 150); // connecting to wifi
   while (WiFi.status() != WL_CONNECTED)

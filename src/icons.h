@@ -6,7 +6,7 @@ uint32_t matrixAllOn[4] = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
 uint32_t matrixAllOff[4] = {0, 0, 0, 0};
 
 const uint32_t loadingAnimation[] =
-    {0x00110064,
+    {0x00110032,
      0x820873cf, 0x03c81020, 0x10438f3c, 0x0f042104,
      0x830872cf, 0x03c81020, 0x10c38d3c, 0x0f042104,
      0x8308724f, 0x03c81020, 0x10c38d3c, 0x0f04210c,
