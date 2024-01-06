@@ -21,9 +21,10 @@ class IV17
   int _delayToScroll;
   String _scrollingString;
   uint32_t _timeSinceLastScroll;
-  uint32_t _lastStringTransitionedBits[6] = {0};
+  uint32_t *_lastStringTransitionedBits;
 public:
   IV17(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t blankPin, uint8_t numOfTubes);
+  ~IV17();
   void shiftOutChar(char c, boolean latch);
   void shiftOutString(String s);
   void shiftOutCyrillicChar(const char c[], boolean latch);

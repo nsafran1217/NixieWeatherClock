@@ -19,8 +19,13 @@ IV17::IV17(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t blankPin
     _numOfTubes = numOfTubes;
     _timeSinceLastScroll = millis();
     _scrollIndex = 0;
+    _lastStringTransitionedBits = new uint32_t[numOfTubes];
 }
-
+IV17::~IV17()
+{
+    // Release dynamically allocated memory in the destructor
+    delete[] _lastStringTransitionedBits;
+}
 void IV17::shiftOutChar(char c, boolean latch)
 {
     if (c < 0x80)
@@ -108,33 +113,34 @@ void IV17::fancyTransitionString(String s, int TransitionMode, int delayms)
         }
         charPos++;
     }
-
+    const uint32_t patternMask[6] = {0x03ffff, 0x03fffc, 0x03f878, 0x037078, 0x030030, 0x000000};
     if (TransitionMode == VERTICAL_TRANSITION)
     {
-        const uint32_t verticalMask[6] = {0x03ffff, 0x03fffc, 0x03f878, 0x037078, 0x030030, 0x000000};
-        for (int i = 0; i < 6; i++)
-        {
-            digitalWrite(_latchPin, LOW);
-            for (charPos = 0; charPos < _numOfTubes; charPos++)
-            {
-                shiftOut20Bits(MSBFIRST, _lastStringTransitionedBits[charPos] & verticalMask[i] | _gridPin);
-                delay(delayms);
-            }
-            digitalWrite(_latchPin, HIGH);
-        }
-
-        for (int i = 5; i >= 0; i--)
-        {
-            digitalWrite(_latchPin, LOW);
-            for (charPos = 0; charPos < _numOfTubes; charPos++)
-            {
-                shiftOut20Bits(MSBFIRST, stringToTransitionBits[charPos] & verticalMask[i] | _gridPin);
-                delay(delayms);
-            }
-            digitalWrite(_latchPin, HIGH);
-        }
+        //TODO set pattern in if statement
     }
-    memcpy(_lastStringTransitionedBits, stringToTransitionBits, sizeof(uint32_t) * 6);
+    for (int i = 0; i < 6; i++)
+    {
+        digitalWrite(_latchPin, LOW);
+        for (charPos = 0; charPos < _numOfTubes; charPos++)
+        {
+            shiftOut20Bits(MSBFIRST, _lastStringTransitionedBits[charPos] & patternMask[i] | _gridPin);
+            delay(delayms);
+        }
+        digitalWrite(_latchPin, HIGH);
+    }
+
+    for (int i = 5; i >= 0; i--)
+    {
+        digitalWrite(_latchPin, LOW);
+        for (charPos = 0; charPos < _numOfTubes; charPos++)
+        {
+            shiftOut20Bits(MSBFIRST, stringToTransitionBits[charPos] & patternMask[i] | _gridPin);
+            delay(delayms);
+        }
+        digitalWrite(_latchPin, HIGH);
+    }
+
+    memcpy(_lastStringTransitionedBits, stringToTransitionBits, sizeof(uint32_t) * _numOfTubes);
 }
 
 void IV17::setScrollingString(String s, int delay)
