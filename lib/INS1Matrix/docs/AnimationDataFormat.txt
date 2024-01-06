@@ -1,0 +1,9 @@
+The data passed to setAnimationToDisplay should be a const uint32_t array.
+The frames of the animation will be listed sequentially.
+If you have one matrix, then each frame will be 2 elements of the array.
+If you have 2 matrices, then each frame will be 4 elements of the array.
+The first 16 bits(int)(LSB) in the first element in the array will be the number of frames in the animation.
+The second 16 bits(int) in the first element will be the delay in milliseconds between frames.
+
+int numOfFrams = (animationImgData[0] >> 16) & 0xFFFF
+int frameDelay = animationImgData[0] & 0xFFFF
