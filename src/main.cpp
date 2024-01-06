@@ -800,7 +800,7 @@ void updateWeatherTask(void *parameter)
     Serial.println(WiFi.status());
     DeserializationError error = deserializeJson(doc, httpGETRequest(apiCallURL.c_str()), DeserializationOption::Filter(filter));
     int count = 0;
-    while (error) // if we dont get the data, attempt to connect to wifi again
+    while (error != DeserializationError::Ok) // if we dont get the data, attempt to connect to wifi again
     {
       count++;
       digitalWrite(WIFI_LED_PIN, LOW);
@@ -829,6 +829,7 @@ void updateWeatherTask(void *parameter)
         if (i > 600)
         { // wait max of 30 seconds for wifi to come up.
           digitalWrite(WIFI_LED_PIN, LOW);
+          xSemaphoreGive(updateWeatherTaskMutex);
           vTaskDelete(NULL); // bail. light will be out to indicate an issue
         }
       }
@@ -836,8 +837,10 @@ void updateWeatherTask(void *parameter)
       // and if some reason we arent, it contiunes in this loop.
       if (count > 10)
       { // bail after 10 tries to get api while connected
-        vTaskDelete(NULL);
         Serial.println("bailing, wifi connected");
+        digitalWrite(WIFI_LED_PIN, LOW);
+        xSemaphoreGive(updateWeatherTaskMutex);
+        vTaskDelete(NULL);  
       }
     }
     digitalWrite(WIFI_LED_PIN, LOW);
