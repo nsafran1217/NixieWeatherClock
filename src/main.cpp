@@ -127,9 +127,6 @@ struct DeviceSettings
   uint8_t displayOnHour;
   uint8_t displayOffHour;
   uint8_t poisonTimeSpan;
-  uint8_t poisonTimeStart;
-  uint8_t vfdBrightness;
-  uint8_t matrixBrightness;
 };
 DeviceSettings settings;
 
@@ -144,8 +141,6 @@ void setRotationSpeed();
 void setTransitionMode();
 void setHourDisplayMode();
 void setOnOffTime();
-void setMatrixBrightness();
-void setVFDBrightness();
 int changeMode(int mode, int numOfModes);
 void updateDateTime();
 void displayTime();
@@ -178,13 +173,10 @@ void setup()
     Serial.println("CRC BAD");
     settings.displayOffHour = 0;
     settings.displayOnHour = 5;
-    settings.poisonTimeSpan = 10;
-    settings.poisonTimeStart = 10;
+    settings.poisonTimeSpan = 17;
     settings.dateTimeDisplayRotateSpeed = 15;
     settings.ClockTransitionMode = 1;
     settings.twelveHourMode = 1;
-    settings.matrixBrightness = 0;
-    settings.vfdBrightness = 0;
     writeEEPROMWithCRC(settings);
     EEPROM.commit();
   }
@@ -214,6 +206,9 @@ void setup()
   // blank display while booting
   matrix.writeStaticImgToDisplay(matrixAllOff);
   Nixies.writeToNixie(255, 255, 255, 0);
+  nixieMutex = xSemaphoreCreateMutex();
+  ivtubesMutex = xSemaphoreCreateMutex();
+  weatherMutex = xSemaphoreCreateMutex();
   // connect to WiFi
   initWiFi();
   // init and get the time
@@ -223,14 +218,7 @@ void setup()
   nextMinuteToUpdateWeather = (((minute / 10) * 10) + 10) % 60;
   updateWeather();
   setCpuFrequencyMhz(80); // slow down for power savings
-  nixieMutex = xSemaphoreCreateMutex();
-  ivtubesMutex = xSemaphoreCreateMutex();
-  weatherMutex = xSemaphoreCreateMutex();
   delay(1000);
-  // set display brightness
-  // analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
-  // Disable dimming for now
-  // analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
   setMatrixWeatherDisplay();
 }
 
@@ -412,7 +400,7 @@ void settingsMenu()
 {
   DeviceSettings oldSettings = settings;
   int settingsMode = 0;
-  const int numOfSettings = 6; // number of settings needs manually set here
+  const int numOfSettings = 5; // number of settings needs manually set here
 
   while (1)
   {
@@ -442,15 +430,7 @@ void settingsMenu()
       break;
     case 5:
       ivtubes.setScrollingString("Anti Poison Timer", 150);
-      Nixies.writeToNixie(settings.poisonTimeStart, 255, settings.poisonTimeSpan, 8);
-      break;
-    // case 6:
-    // ivtubes.setScrollingString("Matrix Brightness", 150);
-    // Nixies.writeToNixie(255, 255, settings.matrixBrightness, 8);
-    // break;
-    case 6:
-      ivtubes.setScrollingString("VFD Brightness", 150);
-      Nixies.writeToNixie(255, 255, settings.vfdBrightness, 8);
+      Nixies.writeToNixie(255, 255, settings.poisonTimeSpan, 8);
       break;
     }
     int lastSettingsMode = settingsMode;
@@ -469,10 +449,7 @@ void settingsMenu()
               settings.ClockTransitionMode == oldSettings.ClockTransitionMode &&
               settings.displayOnHour == oldSettings.displayOnHour &&
               settings.displayOffHour == oldSettings.displayOffHour &&
-              settings.poisonTimeSpan == oldSettings.poisonTimeSpan &&
-              settings.poisonTimeStart == oldSettings.poisonTimeStart &&
-              settings.matrixBrightness == oldSettings.matrixBrightness &&
-              settings.vfdBrightness == oldSettings.vfdBrightness)
+              settings.poisonTimeSpan == oldSettings.poisonTimeSpan)
           {
           }
           else
@@ -480,8 +457,6 @@ void settingsMenu()
             EEPROM.commit();
           }
           // cleanup and get back to normal operation
-          // analogWrite(INS1_BLNK_PIN, settings.matrixBrightness);
-          analogWrite(IV17_BLNK_PIN, settings.vfdBrightness);
           displayVFDWeather();
           return;
         case 1:
@@ -498,12 +473,6 @@ void settingsMenu()
           break;
         case 5:
           setAntiPoisonMinute();
-          break;
-        // case 6:
-        // setMatrixBrightness();
-        // break;
-        case 6:
-          setVFDBrightness();
           break;
         }
       }
@@ -632,11 +601,10 @@ void userInputClock(uint8_t digits[3], uint8_t minValues[3], uint8_t maxValues[3
 
 void setAntiPoisonMinute()
 {
-  uint8_t digits[3] = {settings.poisonTimeStart, 255, settings.poisonTimeSpan};
+  uint8_t digits[3] = {255, 255, settings.poisonTimeSpan};
   uint8_t minValues[3] = {0, 0, 5};
-  uint8_t maxValues[3] = {29, 0, 30};
+  uint8_t maxValues[3] = {0, 0, 30};
   userInputClock(digits, minValues, maxValues, ALLOFF);
-  settings.poisonTimeStart = digits[0];
   settings.poisonTimeSpan = digits[2];
   writeEEPROMWithCRC(settings);
 }
@@ -683,26 +651,6 @@ void setOnOffTime()
   settings.displayOnHour = digits[0];
   writeEEPROMWithCRC(settings);
 }
-void setMatrixBrightness()
-{
-  uint8_t digits[3] = {255, 255, settings.matrixBrightness / 25};
-  uint8_t minValues[3] = {0, 0, 0};
-  uint8_t maxValues[3] = {0, 0, 10};
-  userInputClock(digits, minValues, maxValues, ALLOFF);
-
-  settings.matrixBrightness = digits[2] == 10 ? 255 : 255 - digits[2] * 25;
-  writeEEPROMWithCRC(settings);
-}
-void setVFDBrightness()
-{
-  uint8_t digits[3] = {255, 255, settings.vfdBrightness / 25};
-  uint8_t minValues[3] = {0, 0, 0};
-  uint8_t maxValues[3] = {0, 0, 10};
-  userInputClock(digits, minValues, maxValues, ALLOFF);
-
-  settings.vfdBrightness = digits[2] == 10 ? 255 : 255 - digits[2] * 25;
-  writeEEPROMWithCRC(settings);
-}
 int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode on tube, easy for selecting
 {
 
@@ -727,12 +675,16 @@ int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode
 void updateDateTime()
 {
   struct tm timeinfo;
-  while (!getLocalTime(&timeinfo)) // todo, add a timeout to reset the program
+  int i = 0;
+  while (!getLocalTime(&timeinfo)) 
   {
+    i++;
     Serial.println("Failed to obtain time");
     ivtubes.setScrollingString("НЕ МОГУ ПОЛУЧИТЬ ВРЕМЯ ", 100);
     ivtubes.scrollStringSync();
-    // return;
+    if (i > 11) {
+      esp_restart();  //just reboot and try again
+    }
   }
   hour = timeinfo.tm_hour;
   minute = timeinfo.tm_min;
