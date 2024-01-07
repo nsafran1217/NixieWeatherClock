@@ -83,11 +83,12 @@ void IV17::shiftOutString(String s)
     digitalWrite(_latchPin, HIGH);
 }
 
-void IV17::fancyTransitionString(String s, int TransitionMode, int delayms)
+void IV17::fancyTransitionString(String s, TransitionMode mode, int delayms)
 {                                             // This needs to have been called once before the transition works
     uint32_t stringToTransitionBits[6] = {0}; // array to store bits to be shifted for each char. Will mask this for trasnisiton effect
     char cc[3] = {0, 0, 0};
     int charPos = 0;
+    //converting string in array of data
     for (int i = s.length() - 1; i >= 0; i--) // need to do reverse order because hardware shifts in from left to right.
     {
         if (s[i] > 0x80)
@@ -113,41 +114,42 @@ void IV17::fancyTransitionString(String s, int TransitionMode, int delayms)
         }
         charPos++;
     }
-    const uint32_t *pattern1stMask;
-    const uint32_t *pattern2ndMask;
-    int patternSize = 0;
-    if (TransitionMode == IV17_VERTICAL_BOUNCE_TRANSITION)
+    std::vector<uint32_t> Pattern1stMask;
+    std::vector<uint32_t> Pattern2ndMask;
+
+    switch (mode)
     {
-        patternSize = _verticalBouncePatternSize;
-        pattern1stMask = _verticalBounceMask;
-        pattern2ndMask = pattern1stMask;
+    case VERTICAL_BOUNCE:
+        // const std::vector<uint32_t>
+        Pattern1stMask = {0x03ffff, 0x03fffc, 0x03f878, 0x037078, 0x030030, 0x000000};
+        Pattern2ndMask = Pattern1stMask;
+        break;
+    case VERTICAL_DROP:
+        Pattern1stMask = {0x03ffff, 0x03fffc, 0x03f878, 0x037078, 0x030030, 0x000000};
+        Pattern2ndMask = {0x03ffff, 0x00ffcf, 0x008f87, 0x000787, 0x000003, 0x000000};
+        break;
+    case ROTATE:
+        Pattern1stMask = {0x03ffff, 0x03dfff, 0x03dfef, 0x01cfef, 0x01cfe7, 0x01c7e7, 0x01c7e3, 0x01c3e3, 0x01c3e1, 0x01c1e1, 0x01c1e0, 0x01c0e0, 0x01c060, 0x014060, 0x014020, 0x000020, 0x000000};
+        Pattern2ndMask = {0x03ffff, 0x03ffdf, 0x02bfdf, 0x02bf9f, 0x023f9f, 0x023f1f, 0x023e1f, 0x023e1e, 0x023c1e, 0x023c1c, 0x02381c, 0x023818, 0x023018, 0x023010, 0x002010, 0x002000, 0x000000};
+        break;
     }
-    else if (TransitionMode == IV_17_ROTATE_TRANSITION)
-    {
-        patternSize = _rotatePatternSize;
-        pattern1stMask = _rotatePattern1stMask;
-        pattern2ndMask = _rotatePattern2ndMask;
-    }
-    else
-    {
-    }
-    for (int i = 0; i < patternSize; i++)
+    for (int i = 0; i < Pattern1stMask.size(); i++)
     {
         digitalWrite(_latchPin, LOW);
         for (charPos = 0; charPos < _numOfTubes; charPos++)
         {
-            shiftOut20Bits(MSBFIRST, _lastStringTransitionedBits[charPos] & pattern1stMask[i] | _gridPin);
+            shiftOut20Bits(MSBFIRST, _lastStringTransitionedBits[charPos] & Pattern1stMask[i] | _gridPin);
         }
         digitalWrite(_latchPin, HIGH);
         delay(delayms);
     }
 
-    for (int i = patternSize - 1; i >= 0; i--)
+    for (int i = Pattern2ndMask.size() - 1; i >= 0; i--)
     {
         digitalWrite(_latchPin, LOW);
         for (charPos = 0; charPos < _numOfTubes; charPos++)
         {
-            shiftOut20Bits(MSBFIRST, stringToTransitionBits[charPos] & pattern2ndMask[i] | _gridPin);
+            shiftOut20Bits(MSBFIRST, stringToTransitionBits[charPos] & Pattern2ndMask[i] | _gridPin);
         }
         digitalWrite(_latchPin, HIGH);
         delay(delayms);
