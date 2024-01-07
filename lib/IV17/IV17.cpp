@@ -113,33 +113,45 @@ void IV17::fancyTransitionString(String s, int TransitionMode, int delayms)
         }
         charPos++;
     }
-    const uint32_t patternMask[6] = {0x03ffff, 0x03fffc, 0x03f878, 0x037078, 0x030030, 0x000000};
-    if (TransitionMode == VERTICAL_TRANSITION)
+    const uint32_t *pattern1stMask;
+    const uint32_t *pattern2ndMask;
+    int patternSize = 0;
+    if (TransitionMode == IV17_VERTICAL_BOUNCE_TRANSITION)
     {
-        //TODO set pattern in if statement
+        patternSize = _verticalBouncePatternSize;
+        pattern1stMask = _verticalBounceMask;
+        pattern2ndMask = pattern1stMask;
     }
-    for (int i = 0; i < 6; i++)
+    else if (TransitionMode == IV_17_ROTATE_TRANSITION)
+    {
+        patternSize = _rotatePatternSize;
+        pattern1stMask = _rotatePattern1stMask;
+        pattern2ndMask = _rotatePattern2ndMask;
+    }
+    else
+    {
+    }
+    for (int i = 0; i < patternSize; i++)
     {
         digitalWrite(_latchPin, LOW);
         for (charPos = 0; charPos < _numOfTubes; charPos++)
         {
-            shiftOut20Bits(MSBFIRST, _lastStringTransitionedBits[charPos] & patternMask[i] | _gridPin);
-            delay(delayms);
+            shiftOut20Bits(MSBFIRST, _lastStringTransitionedBits[charPos] & pattern1stMask[i] | _gridPin);
         }
         digitalWrite(_latchPin, HIGH);
+        delay(delayms);
     }
 
-    for (int i = 5; i >= 0; i--)
+    for (int i = patternSize - 1; i >= 0; i--)
     {
         digitalWrite(_latchPin, LOW);
         for (charPos = 0; charPos < _numOfTubes; charPos++)
         {
-            shiftOut20Bits(MSBFIRST, stringToTransitionBits[charPos] & patternMask[i] | _gridPin);
-            delay(delayms);
+            shiftOut20Bits(MSBFIRST, stringToTransitionBits[charPos] & pattern2ndMask[i] | _gridPin);
         }
         digitalWrite(_latchPin, HIGH);
+        delay(delayms);
     }
-
     memcpy(_lastStringTransitionedBits, stringToTransitionBits, sizeof(uint32_t) * _numOfTubes);
 }
 

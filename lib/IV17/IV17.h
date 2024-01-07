@@ -6,11 +6,13 @@ Nathan Safran - 9/9/2023
 #ifndef IV17_h
 #define IV17_h
 #include "Arduino.h"
-#define VERTICAL_TRANSITION 0
-#define ROTATE_TRANSITION 1
+#define IV17_VERTICAL_BOUNCE_TRANSITION 0
+#define IV17_VERTICAL_DROP_TRANSITION 1
+#define IV_17_ROTATE_TRANSITION 2
+
 class IV17
 {
-  private:
+private:
   uint8_t _dataPin;
   uint8_t _clockPin;
   uint8_t _latchPin;
@@ -22,6 +24,12 @@ class IV17
   String _scrollingString;
   uint32_t _timeSinceLastScroll;
   uint32_t *_lastStringTransitionedBits;
+  int _verticalBouncePatternSize = 6;
+  const uint32_t _verticalBounceMask[6]{0x03ffff, 0x03fffc, 0x03f878, 0x037078, 0x030030, 0x000000};
+  int _rotatePatternSize = 17;
+  const uint32_t _rotatePattern1stMask[17] = {0x03ffff, 0x03dfff, 0x03dfef, 0x01cfef, 0x01cfe7, 0x01c7e7, 0x01c7e3, 0x01c3e3, 0x01c3e1, 0x01c1e1, 0x01c1e0, 0x01c0e0, 0x01c060, 0x014060, 0x014020, 0x000020, 0x000000};
+  const uint32_t _rotatePattern2ndMask[17] = {0x03ffff, 0x03ffdf, 0x02bfdf, 0x02bf9f, 0x023f9f, 0x023f1f, 0x023e1f, 0x023e1e, 0x023c1e, 0x023c1c, 0x02381c, 0x023818, 0x023018, 0x023010, 0x002010, 0x002000, 0x000000};
+
 public:
   IV17(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t blankPin, uint8_t numOfTubes);
   ~IV17();
@@ -35,10 +43,10 @@ public:
   void fancyTransitionString(String s, int TransitionMode, int delayms);
   uint32_t _gridPin = 0b01000000000000000000;
   const uint32_t _asciiLookupIV17[128] = {
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 
-      0b00001000001010000001,  //degree symbol. ascii 0x1f
-      0,  //space
+      0b00001000001010000001, // degree symbol. ascii 0x1f
+      0,                      // space
       0b00100000000000001100, //!
       0b00000000001000000100, //"
       0b00001000101000111100, // #
