@@ -106,6 +106,7 @@ struct Weather
 Weather weather;
 char weatherVFD[7]; // characters displayed on VFD
 // Timer Vars
+const int transDelay = 25;
 const uint16_t userInputBlinkTime = 500;
 const uint8_t weatherCheckFreqMin = 10; // consider replacing with #defines since some of these are static
 uint8_t nextMinuteToUpdateWeather = 0;
@@ -130,6 +131,8 @@ struct DeviceSettings
   uint8_t displayOnHour;
   uint8_t displayOffHour;
   uint8_t poisonTimeSpan;
+  IV17::TransitionMode vfd_transition;
+  INS1Matrix::TransitionMode matrix_transition;
 };
 DeviceSettings settings;
 
@@ -144,6 +147,7 @@ void setRotationSpeed();
 void setTransitionMode();
 void setHourDisplayMode();
 void setOnOffTime();
+void setVfdMatrixTransition();
 int changeMode(int mode, int numOfModes);
 void updateDateTime();
 void displayTime();
@@ -181,6 +185,8 @@ void setup()
     settings.dateTimeDisplayRotateSpeed = 15;
     settings.ClockTransitionMode = 1;
     settings.twelveHourMode = 1;
+    settings.vfd_transition = IV17::ROTATE;
+    settings.matrix_transition = INS1Matrix::VERTICAL_BOUNCE;
     writeEEPROMWithCRC(settings);
     EEPROM.commit();
   }
@@ -303,7 +309,7 @@ void loop()
     Serial.println("UPDATE WEATHER");
     updateWeather();
     if (weatherDisplayMode != WEATHER_DISPLAY_ROTATE)
-    { // issue is these will run before the weather struct is updates most likely
+    {                            // issue is these will run before the weather struct is updates most likely
       displayVFDWeather();       // only callled when we update the weather. Otherwise, its static
       setMatrixWeatherDisplay(); // and update what it set for the matrix
     }
@@ -333,15 +339,15 @@ void loop()
         digitalWrite(NOW_LED_PIN, LOW);
         digitalWrite(TMRW_LED_PIN, HIGH);
       }
+      // if (xSemaphoreTake(weatherMutex, delay500ms) == pdTRUE)
+      //{
+      // if (std::memcmp(weather.currentIcon, weather.tmrwIcon, sizeof(weather.currentIcon)) != 0) // only change the display if the icons are different.
+      //{
+      // xSemaphoreGive(weatherMutex);
+      setMatrixWeatherDisplay();
+      //}
+      //}
       displayVFDWeather();
-      if (xSemaphoreTake(weatherMutex, delay500ms) == pdTRUE)
-      {
-        if (std::memcmp(weather.currentIcon, weather.tmrwIcon, sizeof(weather.currentIcon)) != 0) // only change the display if the icons are different.
-        {
-          setMatrixWeatherDisplay();
-        }
-        xSemaphoreGive(weatherMutex);
-      }
     }
   }
   if (readButton(WEATHER_MODE_BTN_PIN)) // change VFD display mode
@@ -416,7 +422,7 @@ void settingsMenu()
 {
   DeviceSettings oldSettings = settings;
   int settingsMode = 0;
-  const int numOfSettings = 5; // number of settings needs manually set here
+  const int numOfSettings = 6; // number of settings needs manually set here
 
   while (1)
   {
@@ -426,19 +432,19 @@ void settingsMenu()
     {
     case 0: // exit, just have number
       ivtubes.setScrollingString("Exit", 150);
-      Nixies.writeToNixie(settingsMode, 255, 255, 0);
+      Nixies.writeToNixie(settingsMode, 255, 255, ALLOFF);
       break;
     case 1: // set date time rotation speed
       ivtubes.setScrollingString("Date/Time display rotate speed", 150);
-      Nixies.writeToNixie(settingsMode, 255, settings.dateTimeDisplayRotateSpeed, 0);
+      Nixies.writeToNixie(settingsMode, 255, settings.dateTimeDisplayRotateSpeed, ALLOFF);
       break;
     case 2: // setHourDisplay
       ivtubes.setScrollingString("12/24 hour mode", 150);
-      Nixies.writeToNixie(255, 255, (settings.twelveHourMode ? 12 : 24), 0);
+      Nixies.writeToNixie(255, 255, (settings.twelveHourMode ? 12 : 24), ALLOFF);
       break;
     case 3: // set setTransitionMode
       ivtubes.setScrollingString("Nixie Transition Mode", 150);
-      Nixies.writeToNixie(255, 255, settings.ClockTransitionMode, 0);
+      Nixies.writeToNixie(255, 255, settings.ClockTransitionMode, ALLOFF);
       break;
     case 4: // set on off time for display
       ivtubes.setScrollingString("On Hour / Off Hour", 150);
@@ -448,6 +454,9 @@ void settingsMenu()
       ivtubes.setScrollingString("Anti Poison Timer", 150);
       Nixies.writeToNixie(255, 255, settings.poisonTimeSpan, 8);
       break;
+    case 6:
+      ivtubes.setScrollingString("Matrix / VFD Transition", 150);
+      Nixies.writeToNixie(settings.matrix_transition, 255, settings.vfd_transition, ALLOFF);
     }
     int lastSettingsMode = settingsMode;
     while (settingsMode == lastSettingsMode)
@@ -465,7 +474,9 @@ void settingsMenu()
               settings.ClockTransitionMode == oldSettings.ClockTransitionMode &&
               settings.displayOnHour == oldSettings.displayOnHour &&
               settings.displayOffHour == oldSettings.displayOffHour &&
-              settings.poisonTimeSpan == oldSettings.poisonTimeSpan)
+              settings.poisonTimeSpan == oldSettings.poisonTimeSpan &&
+              settings.matrix_transition == oldSettings.matrix_transition &&
+              settings.vfd_transition == oldSettings.vfd_transition)
           {
           }
           else
@@ -489,6 +500,9 @@ void settingsMenu()
           break;
         case 5:
           setAntiPoisonMinute();
+          break;
+        case 6:
+          setVfdMatrixTransition();
           break;
         }
       }
@@ -667,6 +681,16 @@ void setOnOffTime()
   settings.displayOnHour = digits[0];
   writeEEPROMWithCRC(settings);
 }
+void setVfdMatrixTransition()
+{
+  uint8_t digits[3] = {settings.matrix_transition, 255, settings.vfd_transition};
+  uint8_t minValues[3] = {0, 0, 0};
+  uint8_t maxValues[3] = {INS1Matrix::num_enums - 1, 0, IV17::num_enums - 1};
+  userInputClock(digits, minValues, maxValues, ALLOFF);
+  settings.matrix_transition = (INS1Matrix::TransitionMode)digits[0];
+  settings.vfd_transition = (IV17::TransitionMode)digits[2];
+  writeEEPROMWithCRC(settings);
+}
 int changeMode(int mode, int numOfModes) // numofmodes starts at 0! display mode on tube, easy for selecting
 {
 
@@ -760,7 +784,7 @@ void vfdFancyTransitionTask(void *parameter) // used as a task
 {
   if (xSemaphoreTake(ivtubesMutex, delay500ms) == pdTRUE)
   {
-    ivtubes.fancyTransitionString(weatherVFD, VERTICAL_TRANSITION, 5);
+    ivtubes.fancyTransitionString(weatherVFD, settings.vfd_transition, transDelay);
     xSemaphoreGive(ivtubesMutex); // Release the mutex
   }
   vTaskDelete(NULL);
@@ -840,7 +864,7 @@ void updateWeatherTask(void *parameter)
         Serial.println("bailing, wifi connected");
         digitalWrite(WIFI_LED_PIN, LOW);
         xSemaphoreGive(updateWeatherTaskMutex);
-        vTaskDelete(NULL);  
+        vTaskDelete(NULL);
       }
     }
     digitalWrite(WIFI_LED_PIN, LOW);
@@ -948,8 +972,6 @@ void displayVFDWeather()
         4,                             // Task priority
         NULL                           // Task handle
     );
-    // ivtubes.shiftOutString(weatherVFD);
-
     // Serial.println(weatherVFD);
   }
 }
@@ -962,7 +984,7 @@ void setMatrixWeatherDisplay()
     xTaskCreate(
         setMatrixWeatherDisplayTask, // Function that should be called
         "set the matrix display",    // Name of the task (for debugging)
-        1000,                        // Stack size (bytes)
+        2000,                        // Stack size (bytes)
         (void *)iconToDisplay,       // Parameter to pass
         5,                           // Task priority
         NULL                         // Task handle
@@ -982,7 +1004,7 @@ void setMatrixWeatherDisplayTask(void *parameter)
     {
       matrix.writeStaticImgToDisplay(const_cast<uint32_t *>((iconToDisplay + 1))); // just display the first frame of icon
     }
-    // matrix.fancyTransitionFrame(const_cast<uint32_t *>((iconToDisplay + 1)), VERTICAL_TRANSITION, 5);
+    matrix.fancyTransitionFrame(const_cast<uint32_t *>((iconToDisplay + 1)), settings.matrix_transition, transDelay);
     xSemaphoreGive(matrixMutex);
   }
   vTaskDelete(NULL);
