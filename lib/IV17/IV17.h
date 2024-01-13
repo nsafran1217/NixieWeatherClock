@@ -30,7 +30,8 @@ public:
   {
     VERTICAL_BOUNCE,
     VERTICAL_DROP,
-    ROTATE
+    ROTATE,
+    num_enums // hacky way to get number of values in enum
   };
   void shiftOutChar(char c, boolean latch);
   void shiftOutString(String s);
