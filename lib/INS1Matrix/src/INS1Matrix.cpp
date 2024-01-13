@@ -5,6 +5,7 @@ Nathan Safran - 9/10/2023
 
 #include "Arduino.h"
 #include "INS1Matrix.h"
+#include <vector>
 
 INS1Matrix::INS1Matrix(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t blankPin, boolean inverted, uint8_t displays)
 {
@@ -71,59 +72,101 @@ void INS1Matrix::animateDisplay()
         _timeOfLastFrame = currentMillis;
     }
 }
-void INS1Matrix::fancyTransitionFrame(const uint32_t *FirstFrameImgData, int TransitionMode, int delayms) // transition between the old frame and a new frame
+void INS1Matrix::fancyTransitionFrame(const uint32_t *FirstFrameImgData, TransitionMode mode, int delayms) // transition between the old frame and a new frame
 {
-    if (TransitionMode == VERTICAL_TRANSITION)
+    std::vector<std::vector<uint32_t>> Pattern1stMask;
+    std::vector<std::vector<uint32_t>> Pattern2ndMask;
+
+    switch (mode)
     {
-        const uint32_t patternMask[6][4] = {
+    case VERTICAL_BOUNCE:
+        // const std::vector<uint32_t>
+        Pattern1stMask = {
             {0xffffffff, 0x0fffffff, 0xffffffff, 0x0fffffff},
             {0xfffff000, 0x0fffffff, 0xfffff000, 0x0fffffff},
             {0xff000000, 0x0fffffff, 0xff000000, 0x0fffffff},
             {0x00000000, 0x0ffffff0, 0x00000000, 0x0ffffff0},
             {0x00000000, 0x0fff0000, 0x00000000, 0x0fff0000},
             {0x00000000, 0x00000000, 0x00000000, 0x00000000}};
+        Pattern2ndMask = Pattern1stMask;
+        break;
+    case VERTICAL_DROP:
+        Pattern1stMask = {
+            {0xffffffff, 0x0fffffff, 0xffffffff, 0x0fffffff},
+            {0xfffff000, 0x0fffffff, 0xfffff000, 0x0fffffff},
+            {0xff000000, 0x0fffffff, 0xff000000, 0x0fffffff},
+            {0x00000000, 0x0ffffff0, 0x00000000, 0x0ffffff0},
+            {0x00000000, 0x0fff0000, 0x00000000, 0x0fff0000},
+            {0x00000000, 0x00000000, 0x00000000, 0x00000000}};
+        Pattern2ndMask = {
+            {0xffffffff, 0x0fffffff, 0xffffffff, 0x0fffffff},
+            {0xffffffff, 0x0000ffff, 0xffffffff, 0x0000ffff},
+            {0xffffffff, 0x0000000f, 0xffffffff, 0x0000000f},
+            {0x00ffffff, 0x00000000, 0x00ffffff, 0x00000000},
+            {0x00000fff, 0x00000000, 0x00000fff, 0x00000000},
+            {0x00000000, 0x00000000, 0x00000000, 0x00000000}};
+        break;
+    case ROTATE:
+        Pattern1stMask = {
+            {0xffffffff, 0x0fffffff, 0xffffffff, 0x0fffffff},
+            {0xffffffff, 0x0c38f3ef, 0xffffffff, 0x0fffffff},
+            {0x3fffffff, 0x0020c38f, 0xffffffff, 0x0fffffff},
+            {0x3fffffff, 0x00000000, 0xffffffff, 0x0fffffff},
+            {0x073dffff, 0x00000000, 0xffffffff, 0x0fffffff},
+            {0x010c73df, 0x00000000, 0xffffffff, 0x0fffffff},
+            {0x00000000, 0x00000000, 0xffffffff, 0x0fffffff},
+            {0x00000000, 0x00000000, 0xfffdf3c7, 0x0fffffff},
+            {0x00000000, 0x00000000, 0xdf3c70c1, 0x0fffffff},
+            {0x00000000, 0x00000000, 0xcf1c1000, 0x0fffffff},
+            {0x00000000, 0x00000000, 0xc0000000, 0x0fffffff},
+            {0x00000000, 0x00000000, 0x00000000, 0x0ffffbce},
+            {0x00000000, 0x00000000, 0x00000000, 0x0fbce308},
+            {0x00000000, 0x00000000, 0x00000000, 0x0e38c200},
+            {0x00000000, 0x00000000, 0x00000000, 0x00000000}};
+        Pattern2ndMask = Pattern1stMask;
+        break;
+    }
 
-        for (int bitMaskPos = 0; bitMaskPos < 6; bitMaskPos++)
+    for (int bitMaskPos = 0; bitMaskPos < Pattern1stMask.size(); bitMaskPos++)
+    {
+        uint8_t bitValue;
+        for (int i = 0; i < _displays * 2; i++)
         {
-            uint8_t bitValue;
-            for (int i = 0; i < _displays * 2; i++)
+            uint32_t ImgData = _lastDataSentToDisplay[i] & Pattern1stMask[bitMaskPos][i];
+            for (int j = 0; j < 32; j++)
             {
-                uint32_t ImgData = _lastDataSentToDisplay[i] & patternMask[bitMaskPos][i];
-                for (int j = 0; j < 32; j++)
-                {
-                    bitValue = _inverted ? !(ImgData & (1ul << j)) : !!(ImgData & (1ul << j));
-                    digitalWrite(_dataPin, bitValue);
-                    digitalWrite(_clockPin, _highValue);
-                    delayMicroseconds(7);
-                    digitalWrite(_clockPin, _lowValue);
-                }
+                bitValue = _inverted ? !(ImgData & (1ul << j)) : !!(ImgData & (1ul << j));
+                digitalWrite(_dataPin, bitValue);
+                digitalWrite(_clockPin, _highValue);
+                delayMicroseconds(7);
+                digitalWrite(_clockPin, _lowValue);
             }
-            digitalWrite(_latchPin, _highValue);
-            delayMicroseconds(7);
-            digitalWrite(_latchPin, _lowValue);
-            delay(delayms);
         }
+        digitalWrite(_latchPin, _highValue);
+        delayMicroseconds(7);
+        digitalWrite(_latchPin, _lowValue);
+        delay(delayms);
+    }
 
-        for (int bitMaskPos = 5; bitMaskPos >= 0; bitMaskPos--)
+    for (int bitMaskPos = Pattern2ndMask.size() - 1; bitMaskPos >= 0; bitMaskPos--)
+    {
+        uint8_t bitValue;
+        for (int i = 0; i < _displays * 2; i++) // displays*2 becuase each display needs two uint32_t's
         {
-            uint8_t bitValue;
-            for (int i = 0; i < _displays * 2; i++) // displays*2 becuase each display needs two uint32_t's
-            {
 
-                uint32_t ImgData = FirstFrameImgData[i] & patternMask[bitMaskPos][i];
-                for (int j = 0; j < 32; j++)
-                {
-                    bitValue = _inverted ? !(ImgData & (1ul << j)) : !!(ImgData & (1ul << j));
-                    digitalWrite(_dataPin, bitValue);
-                    digitalWrite(_clockPin, _highValue);
-                    delayMicroseconds(7);
-                    digitalWrite(_clockPin, _lowValue);
-                }
+            uint32_t ImgData = FirstFrameImgData[i] & Pattern2ndMask[bitMaskPos][i];
+            for (int j = 0; j < 32; j++)
+            {
+                bitValue = _inverted ? !(ImgData & (1ul << j)) : !!(ImgData & (1ul << j));
+                digitalWrite(_dataPin, bitValue);
+                digitalWrite(_clockPin, _highValue);
+                delayMicroseconds(7);
+                digitalWrite(_clockPin, _lowValue);
             }
-            digitalWrite(_latchPin, _highValue);
-            delayMicroseconds(7);
-            digitalWrite(_latchPin, _lowValue);
-            delay(delayms);
         }
+        digitalWrite(_latchPin, _highValue);
+        delayMicroseconds(7);
+        digitalWrite(_latchPin, _lowValue);
+        delay(delayms);
     }
 }
