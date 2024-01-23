@@ -207,6 +207,15 @@ void setup()
   pinMode(NOW_LED_PIN, OUTPUT);
   pinMode(TMRW_LED_PIN, OUTPUT);
   pinMode(WIFI_LED_PIN, OUTPUT);
+  int i = 0;
+  while (i < 10)
+  {
+    // wait 10 seconds for 12v power to come up
+    // even though the esp32 wont be booted until then. Just some extra saftey.
+    digitalWrite(WIFI_LED_PIN, !(digitalRead(WIFI_LED_PIN)));
+    delay(1000);
+    i++;
+  }
 
   digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH); // turn on power
   // setup rotary encoder
@@ -216,6 +225,7 @@ void setup()
   // blank display while booting
   matrix.writeStaticImgToDisplay(matrixAllOff);
   Nixies.writeToNixie(255, 255, 255, 0);
+  ivtubes.shiftOutString("       ");
   nixieMutex = xSemaphoreCreateMutex();
   ivtubesMutex = xSemaphoreCreateMutex();
   weatherMutex = xSemaphoreCreateMutex();
