@@ -15,6 +15,8 @@
 #include <icons.h>
 
 // EEPROM ADDRESSES
+#define PHONE_PING
+
 #define EEPROM_CRC_ADDRESS 0
 #define SETTINGS_ADDRESS 4
 
@@ -115,6 +117,14 @@ uint8_t nextPoisonRunMinute = 0; // next minute that antipoison will run
 uint8_t nextSecondToChangeDateTimeModes = 0;
 uint8_t nextSecondToChangeWeatherTime = 0;
 unsigned long userNotifyTimer = 0;
+struct SuccessfulPingTime
+{
+  uint8_t hour = 0;
+  uint8_t minute = 0;
+  uint8_t NextMinuteToCheck = 0;
+  bool PowerIsOn = true;
+};
+SuccessfulPingTime lastSuccessfulPing;
 // Mode Vars
 uint8_t timeDateDisplayMode = NIXIE_MODE_DISPLAY_TIME; // display time, date, or rotate between them
 boolean displayDateOrTime = NIXIE_IS_DISPLAY_TIME;     // are we displaying the date or time
@@ -238,6 +248,7 @@ void setup()
   updateDateTime();
   nextPoisonRunMinute = (minute + settings.poisonTimeSpan) % 60;
   nextMinuteToUpdateWeather = (((minute / 10) * 10) + 10) % 60;
+  lastSuccessfulPing.NextMinuteToCheck = (minute + 1) % 60;
   updateWeather();
   setCpuFrequencyMhz(80); // slow down for power savings
   delay(1000);
@@ -263,19 +274,50 @@ void loop()
     // Enter deep sleep mode
     esp_deep_sleep_start();
   }
-  // Tunn off supplies while im not home
-  /*
-  if (isBetweenHours(hour, 9, 16)) //only do this between 9 and 4
+// Turn off Power supplies while im not home
+#ifdef PHONE_PING
+  if (minute == lastSuccessfulPing.NextMinuteToCheck && digitalRead(ON_OFF_SW_PIN)) // check every 5 minutes, if in auto position
   {
-    if (digitalRead(SHUTDOWN_PWR_SUPPLY_PIN)) // if supply is on
+    //Serial.println("check");
+    lastSuccessfulPing.NextMinuteToCheck = (lastSuccessfulPing.NextMinuteToCheck + 5) % 60;
+    if (isBetweenHours(hour, 9, 16)) // only do this between 9 and 4
     {
-      if (Ping.ping(PhoneIPAddress, 2))
+      if (Ping.ping(PhoneIPAddress, 1))
       {
-        digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
+        //Serial.println("PING");
+        lastSuccessfulPing.hour = hour;
+        lastSuccessfulPing.minute = minute;
+        if (lastSuccessfulPing.PowerIsOn == false)
+        {
+          //Serial.println("TurnOn");
+          digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
+          lastSuccessfulPing.PowerIsOn = true;
+        }
+      }
+      else
+      {
+        //Serial.println("NO PING");
+        // Check if it's been 30 minutes since a successful ping
+        if ((hour * 60 + minute) - (lastSuccessfulPing.hour * 60 + lastSuccessfulPing.minute) >= 30 && lastSuccessfulPing.PowerIsOn == true)
+        {
+          //Serial.println("TurnOff");
+          digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, LOW); // If it has been 30 minutes since the last successful ping, turn off
+          lastSuccessfulPing.PowerIsOn = false;
+        }
       }
     }
+    else if (lastSuccessfulPing.PowerIsOn == false)
+    {
+      digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH); // turn back on after the work day is over
+    }
   }
-  */
+  if (lastSuccessfulPing.PowerIsOn == false && digitalRead(ON_OFF_SW_PIN) == 0)
+  { // turn the supply back on if switch is moved to ON position
+    digitalWrite(SHUTDOWN_PWR_SUPPLY_PIN, HIGH);
+    lastSuccessfulPing.PowerIsOn = true;
+  }
+#endif
+
   // NixieTube section
   timeDateDisplayMode = changeMode(timeDateDisplayMode, 2); // rotary encoder to change time mode while in main loop
   updateDateTime();                                         // update the time vars
